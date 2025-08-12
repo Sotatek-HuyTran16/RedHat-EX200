@@ -1316,3 +1316,1832 @@ renice -n 19 <PID>
 ```
 
 ## Chapter 6: Quản lý bảo mật SELinux
+
+### 6.1. Giới thiệu SELinux
+
+SELinux (security enhanced linux) là một tính năng bảo mật quan trọng của Linux. Quyền truy cập vào các file, port và các tài nguyên đều được quản lý ở mức chi tiết.
+
+Ví dụ, file permission quản lý truy cập vào file của user và group, tuy nhiên, nó không thể ngăn chặn 1 người dùng có quyền truy cập file sử dụng file vào mục đích ko rõ ràng.
+
+SELinux bao gồm các chính sách dành riêng cho ứng dụng mà các nhà phát triển ứng dụng định nghĩa để khai báo những hành động và quyền truy cập nào được phép đối với từng tệp thực thi nhị phân, tệp cấu hình và tệp dữ liệu mà ứng dụng sử dụng
+
+SELinux áp dụng 1 bộ quy tắc (policy) truy cập, xác định các hành động được phép giữa các tiến trình và tài nguyên, các tiến trình chỉ được phép truy cập các tài nguyên mà chính sách SELinux hoặc cài đặt của chúng chỉ định.
+
+Ngay cả khi ứng dụng có lỗi bảo mật, SELinux vẫn có thể ngăn chặn sự lợi dụng các lỗi đó, miễn là policy SELinux giới hạn đúng những gì ứng dụng được phép làm.
+
+Đây là một lớp bảo mật bổ sung bên cạnh các lớp truyền thống như firewall, file permission.
+
+Trong RHEL, các ứng dụng hoặc service có SELinux 'target policy' sẽ chạy ở 1 domain riêng (confined domain)
+
+Các ứng dụng không có chính sách sẽ chạy trong domain unconfined và không bị quản lý bởi SELinux
+
+SELinux có 3 chế độ hoạt động:
+- Enforcing: SElinux cưỡng chế thực hiện các policy đã loaded (là chế độ mặc định trên RHEL), mọi hoạt động trái với policy sẽ bị block và ghi vào log
+- Permissive: SELinux vẫn hoạt động, ghi nhận các vi phạm về policy, tuy nhiên chỉ log lại lỗi chứ ko chặn các hoạt động vi phạm -> sd để debug
+- Disable: tắt hoàn toàn SELinux
+
+Các log sẽ được ghi trong /var/log/audit/audit.log
+
+Từ RHEL 9 trở đi, bạn không thể tắt SELinux bằng cách sửa file /etc/selinux/config, để tắt SELinux, sửa tham số 'selinux=0' và reboot hệ thống
+
+### 6.2. Các concetps cơ bản của SELinux
+
+Mục tiêu chính của SELinux là bảo vệ dữ liệu người dùng khỏi việc sử dụng sai mục đích bởi các ứng dụng hoặc dịch vụ hệ thống bị xâm phạm.
+
+Hầu hết các Linux admin đều quen thuộc với mô hình user, group và world wide permission truyền thống, hay còn gọi là Discretionary Access Control (DAC)
+
+SELinux là module bảo mật dành cho kernel của hệ thống
+
+SELinux cung cấp một lớp bảo mật bổ sung dựa trên đối tượng (object-based), được định nghĩa trong các quy tắc chi tiết, được gọi là Mandatory Access Control (MAC)vì các chính sách áp dụng cho tất cả người dùng và không thể bypass đối với những người dùng cụ thể bằng các thiết lập cấu hình.
+
+Các context gồm 4 thành phần:
+
+![SElinux](pic/SELinux.png)
+
+```bash
+[root@host ~]# ps axZ
+LABEL                               PID TTY      STAT   TIME COMMAND
+system_u:system_r:kernel_t:s0         2 ?        S      0:00 [kthreadd]
+system_u:system_r:kernel_t:s0         3 ?        I<     0:00 [rcu_gp]
+system_u:system_r:kernel_t:s0         4 ?        I<     0:00 [rcu_par_gp]
+...output omitted...
+[root@host ~]# systemctl start httpd
+[root@host ~]# ps -ZC httpd
+LABEL                               PID TTY          TIME CMD
+system_u:system_r:httpd_t:s0       1550 ?        00:00:00 httpd
+system_u:system_r:httpd_t:s0       1551 ?        00:00:00 httpd
+system_u:system_r:httpd_t:s0       1552 ?        00:00:00 httpd
+system_u:system_r:httpd_t:s0       1553 ?        00:00:00 httpd
+system_u:system_r:httpd_t:s0       1554 ?        00:00:00 httpd
+[root@host ~]# ls -Z /var/www
+system_u:object_r:httpd_sys_script_exec_t:s0 cgi-bin
+system_u:object_r:httpd_sys_content_t:s0 html
+```
+
+SELinux kiểm soát sâu hơn dựa trên các type context. Mỗi tiến trình, port và file đều có label và các policy chỉ cho phép một tiến trình với context nhất định được truy cập vào file hay port có label phù hợp
+
+Sau khi đã gán label (context) cho các file, port và process, SELinux có các file cấu hình để định nghĩa các policy theo mong muốn
+
+vd: process có context 'httpd_t' chỉ được phép đọc các file có context 'httpd_sys_content_t' và sử dụng các port có context 'http_port_t'
+
+Để quản lý user, SELinux sử dụng user riêng khác với user thông thường. Để gán policy cho user, làm các bước sau:
+- tạo SELinux user
+- gán SELinux user vào user
+- gán role và domain phù hợp cho SELinux user hoặc tạo các policy cho SELinux user
+
+**Thay đổi SELinux mode**
+
+Để thay đổi chế độ hoạt động của SELinux, sử dụng lệnh 'getenforce'
+
+```bash
+# ktra mode hiện tại
+getenforce
+
+# thay đổi mode tạm thời (sẽ bị reset sau reboot)
+setenforce Enforcing
+
+setenforce 1 # lệnh này cũng sd mode Enforcing
+```
+
+Để thay đổi mode mặc định của SELinux (thay đổi vĩnh viễn kể cả reboot), sửa dòng 'SELINUX=permissive' trong file /etc/selinux/config
+
+**Quản lý SELinux context của file**
+
+Các context của file được lưu trong 1 file-based database nằm ở thư mục /etc/selinux/targeted/contexts/files/file_contexts
+
+![file-context](pic/file-context.png)
+
+Hoặc cũng có thể xem bằng lệnh 'semanage'
+
+Các context khác được lưu như sau:
+- user - nằm ở /etc/selinux/targeted/contexts/users/* (có thể xem bằng lệnh 'semanage')
+- port - ko lưu file riêng, xem bằng 'semanage port -l'
+- process - ko lưu tĩnh mà được gán khi bắt đầu chạy và được gán context dựa vào các policy và domain mà process thuộc về.
+
+Logic kế thừa context của các folder:
+- Nếu tạo file trong thư mục đã có policy được định nghĩa rõ ràng, file sẽ được gán context đúng, phù hợp theo policy
+- Nếu folder ko có policy thì file sẽ kế thừa context của folder
+- Khi di chuyển file (mv) thì inode giữ nguyên -> context ko đổi
+- Khi copy file sang thư mục mới, tạo inode mới -> conext được áp dụng theo thư mục đích như nội dung 1 và 2
+
+**Thay đổi SELinux context**
+
+Có 3 câu lệnh để thay đổi SELinux context:
+- semanage fcontext
+- restorecon
+- chcon
+
+Cách khuyến nghị: semanage fcontext + restorecon
+
+Sử dụng 'semanage fcontext' để tạo/sửa rule trong policy, xác định đường dẫn file hoặc thư mục cụ thể sẽ có context nào
+
+Sau đó, restorecon sẽ áp dụng lại context theo policy đã định nghĩa (trong đó có rule mới add)
+
+```bash
+# tạo rule
+semanage fcontext -a -t <type> <path> 
+
+# áp dụng context mới
+restorecon <path>
+```
+
+Lệnh 'chcon' sẽ thay đổi trực tiếp context của file/folder nhưng ko thay đổi policy. Khi hệ thống reboot hoặc restorecon thì các context này sẽ bị ghi đè lại
+
+Biểu thức (/.*) trong policy thường được gắn vào sau tên một thư mục trong policy SELinux, có nghĩa là "tất cả file hoặc folder trong thư mục đều sẽ áp dụng policy này"
+
+```bash
+/var/www/cgi-bin(/.*)?  all files  system_u:object_r:httpd_sys_script_exec_t:s0
+
+# /var/www(/.*)? sẽ bao gồm /var/www và tất cả các thư mục con, file con bên trong nó như /var/www/html/index.html, /var/www/css/style.css, v.v.
+```
+
+Các lệnh 'semanage' cơ bản:
+
+![semanage-option](pic/semanage-option.png)
+
+```bash
+# xem context file chỉ định
+[root@host ~]# ls -Z /var/www/html/file*
+unconfined_u:object_r:user_tmp_t:s0 /var/www/html/file1
+unconfined_u:object_r:httpd_sys_content_t:s0 /var/www/html/file2
+
+# liệt kê các context mặc định theo policy
+[root@host ~]# semanage fcontext -l
+...output omitted...
+/var/www(/.*)?       all files    system_u:object_r:httpd_sys_content_t:s0
+...output omitted...
+
+# Cập nhật context theo policy mới nhất
+[root@host ~]# restorecon -Rv /var/www/
+Relabeled /var/www/html/file1 from unconfined_u:object_r:user_tmp_t:s0 to unconfined_u:object_r:httpd_sys_content_t:s0
+
+# thêm policy cho 1 folder
+[root@host ~]# semanage fcontext -a -t httpd_sys_content_t '/virtual(/.*)?'
+
+# xem các policy đã được custom khác với các policy mặc định của linux
+[root@host ~]# semanage fcontext -l -C
+```
+
+**Cấu hình SELinux policy với booleans**
+
+Sau khi nhà phát triển đã viết các SELinux targeted policy, có thể thêm các behavior (hành vi mở rộng) cho policy, giúp policy linh hoạt hơn trong từng tình huống.
+
+Các behavior này là optional (ko bắt buộc) và có thể bật/tắt bằng SELinux Booleans
+
+Policy thì ko thể bật/tắt linh hoạt được
+
+Các hành vi mở rộng này còn phụ thuộc vào từng ứng dụng cụ thể, và cần phải tìm hiểu cũng như bật/tắt phù hợp với ứng dụng.
+
+Các booleans theo dịch vụ được ghi chép trong man page của dịch vụ tương ứng
+
+Sử dụng lệnh 'getsebool' để liệt kê 
+
+```bash
+# liệt kê các Booleans có sẵn của các policy và trạng thái hiện tại
+[root@host ~]# getsebool -a
+abrt_anon_write --> off
+abrt_handle_event --> off
+abrt_upload_watch_anon_write --> on
+...output omitted...
+
+# Bật/tắt trạng thái của các behavior, sử dụng option -P để bật/tắt vĩnh viễn (cập nhập policy file)
+setsebool -P abrt_handle_event on
+
+# liệt kê trạng thái của 1 behavior đã biết tên
+[root@host ~]# getsebool httpd_enable_homedirs
+httpd_enable_homedirs --> off
+
+# kiểm tra trạng thái chi tiết của behavior
+[root@host ~]# semanage boolean -l | grep httpd_enable_homedirs
+httpd_enable_homedirs          (on   ,  off)  Allow httpd to enable homedirs
+
+# on - trạng thái hiện tại
+# off - trạng thái mặc định khi reboot 
+
+# liệt kê các behavior có setting khác với setting khi reboot, dùng option -C
+[root@host ~]# semanage boolean -l -C
+```
+
+### 6.3. Điều tra và giải quyết các vấn đề của SELinux
+
+Cần hiểu rõ các nguyên tắc hoạt động của SELinux:
+- SELinux sd chính sách dạng 'targeted' - chỉ giám sát 1 số dịch vụ cụ thể
+- Mỗi dòng trong policy định nghĩa các tiến trình có context nào sẽ được cho phép các hành động (action) nào với tài nguyên có context nào
+- Các action có thể có: system call, kernel function...
+- Nếu ko có rule cho action trong policy thì mặc định action sẽ bị chặn
+- RHEL đã có các policy ổn định nên rất hiếm khi xảy ra lỗi, thường là do dev cấu hình sai dịch vụ hoặc sai policy
+
+Một số cách debug:
+- Đọc mô tả trong man page (tìm kiếm tên-dịch-vụ + _selinux)
+- Đôi khi cấu hình booleans thôi là chưa đủ, cần cấu hình thêm ở ngoài SELinux (vd: đã enable SELinux nhưng dịch vụ chưa được cấp user permission, file permission(rwx)...)
+
+**Giám sát các lỗi vi phạm SELinux**
+
+Khi SELinux ngăn chặn một hành động, một thông điệp gọi là AVC (Access Vector Cache) sẽ được ghi vào file log /var/log/audit/audit.log.
+
+Để hỗ trợ xử lý lỗi, dịch vụ SELinux troubleshooting (được cung cấp bởi gói setroubleshoot-server) sẽ:
+- Theo dõi các sự kiện AVC.
+- Gửi thông báo tóm tắt đến file /var/log/messages.
+- Gợi ý các lệnh xử lý lỗi.
+
+Quy trình xử lý lỗi khi SELinux ngăn chặn 1 hành động:
+- Xem log trong /var/log/audit/audit.log hoặc /var/log/messages
+- Tìm UUID nếu có và dùng 'sealert -l <UUID>' để xem chi tiết 
+- Sử dụng 'restorecon', hoặc tạo policy với 'audit2allow' nếu cần
+
+![selinux-debug](pic/selinux-debug.png)
+
+## Chapter 7: Quản lý Storage cơ bản
+
+### 7.1. Tạo phân vùng, định dạng hệ thống tệp tin (file system) và gắn vĩnh viễn (persistent mounts)
+
+**Phân vùng ổ đĩa**
+
+Phân vùng ổ đĩa (disk partitioning) là quá trình chia ổ cứng vật lý thành nhiều vùng logic (partitions). Mỗi phân vùng có thể dùng cho mục đích khác nhau.
+
+Lợi ích của việc phân vùng:
+- Giới hạn không gian lưu trữ cho ứng dụng hoặc người dùng.
+- Tách biệt hệ điều hành với dữ liệu người dùng → dễ bảo trì, backup.
+- Tạo phân vùng swap riêng cho bộ nhớ ảo.
+- Tăng hiệu quả trong việc chẩn đoán và sao lưu.
+
+**MBR Partition**
+
+MBR (Master Boot Record) là một chuẩn phân vùng cũ, dùng phổ biến trên các hệ thống sử dụng BIOS.
+
+Số phân vùng tối đa: 4 phân vùng
+
+Có thể tạo nhiều phân vùng hơn bằng cách tạo extended partition chứa logical partitions (tối đa 15 phân vùng trên Linux)
+
+![MBR-partition](pic/MBR-partition.png)
+
+Kích thước đĩa tối đa: 2 TiB (do giới hạn 32-bit địa chỉ hóa)
+
+Vị trí MBR nằm ở sector đầu tiên (512 bytes) của ổ đĩa, chứa:
+- Thông tin bootloader để khởi động hệ điều hành
+- Bảng phân vùng cho tối đa 4 phân vùng chính (primary)
+
+Hỗ trợ các hệ thống dùng BIOS (Legacy boot)
+
+**GPT Partition**
+
+GPT (GUID Partition Table) là sơ đồ phân vùng hiện đại, được sử dụng chủ yếu trên các hệ thống dùng UEFI firmware. Nó khắc phục hoàn toàn các hạn chế của MBR và mang lại nhiều tính năng mạnh mẽ, an toàn hơn.
+
+![GPT-partition](pic/GPT-partition.png)
+
+| Tiêu chí                | GPT                                                | MBR                                      |
+| ----------------------- | -------------------------------------------------- | ---------------------------------------- |
+| Dùng với firmware       | UEFI                                           | BIOS                                     |
+| Kích thước đĩa tối đa   | \~8 ZiB (Zebibyte) = 8 tỷ TiB                  | 2 TiB                                |
+| Số phân vùng            | 128 hoặc nhiều hơn                             | 4 primary (15 nếu dùng extended/logical) |
+| Phát hiện lỗi           | ✅ CRC32 checksum cho GPT header và partition table | ❌ Không có                               |
+| Dự phòng bảng phân vùng | ✅ Có bảng phụ dự phòng ở cuối ổ đĩa                | ❌ Không có                               |
+| Mã định danh phân vùng  | GUID (Globally Unique ID)                      | Dựa vào thứ tự                           |
+
+GPT dùng 64-bit địa chỉ logic (LBA) để định vị các khối dữ liệu → hỗ trợ đĩa rất lớn.
+
+Mỗi phân vùng và ổ đĩa có một GUID duy nhất → dễ quản lý, đồng bộ.
+
+Tự động kiểm tra lỗi với checksum → phát hiện khi bảng phân vùng bị hỏng.
+
+Bảng phân vùng GPT được lưu ở:
+- Đầu đĩa (Primary GPT Header)
+- Cuối đĩa (Backup GPT Header)
+
+**Quản lý phân vùng**
+
+Sử dụng parted (một partition editor) để thực hiện các thao tác với phân vùng:
+- Tạo mới phân vùng
+- Xoá phân vùng
+- Đổi loại phân vùng
+- In bảng phân vùng
+
+Các câu lệnh:
+```bash
+# xem thông tin phân vùng
+parted /dev/<tên_ổ_đĩa> print
+
+# mở chế độ tương tác
+[root@host ~]# parted /dev/vda
+```
+
+**Viết bảng phân vùng (partition table) cho ổ đĩa mới**
+
+Khi bắt đầu phân vùng ổ đĩa, bước 1 là ghi nhãn đĩa (disk label).
+
+Disk label sẽ xác định pattitioning scheme sẽ sd:
+- MBR: sử dụng lệnh mklabel msdos
+- GPT: sử dụng lệnh mklabel gpt
+
+Câu lệnh mẫu:
+```bash
+# Ghi nhãn MBR
+parted /dev/vdb mklabel msdos
+
+# Ghi nhãn GPT
+parted /dev/vdb mklabel gpt
+```
+
+Lưu ý: lệnh mklabel sẽ xóa toàn bộ bảng phân vùng hiện tại.
+
+Nếu ổ đĩa đã có dữ liệu hoặc phân vùng:
+- Tất cả phân vùng và dữ liệu hiện tại sẽ bị mất
+- Nếu disk label mới thay đổi ranh giới phân vùng, dữ liệu trong các tập tin cũ sẽ ko thể truy cập được
+
+-> Chỉ sử dụng mklabel khi ko cần dữ liệu cũ
+
+**Tạo phân vùng MBR**
+
+Sau khi tạo bảng phân vùng, thực hiện tạo phân vùng MBR
+
+Vào chế độ tương tác (interactive mode)
+```bash
+parted /dev/vdb
+```
+
+Tạo phân vùng bằng lệnh mkpart
+```bash
+(parted) mkpart
+
+# sau đó, chọn các thông tin phân vùng 
+Partition type?  primary/extended? primary 
+
+File system type?  [ext2]? xfs
+
+Start? 2048s
+End? 1000MB
+
+# lệnh mkpart chỉ thực hiện tạo 1 phân vùng, nếu cần thêm thì phải lặp lại bước này
+```
+
+Cập nhật hệ thống để nhận phân vùng mới:
+```bash
+[root@host ~]# udevadm settle
+```
+
+Nếu muốn tạo phân vùng nhanh mà ko vào chế độ tương tác, sd lệnh:
+```bash
+[root@host ~]# parted /dev/vdb mkpart userdata xfs 2048s 1000MB
+```
+
+**Tạo phân vùng GPT**
+
+Thực hiện các bước tương tự MBR:
+
+```bash
+parted /dev/vdb # vào interactive mode
+
+(parted) mkpart # tạo phân vùng mới
+
+# fill thông tin
+Partition name?  []? userdata
+
+File system type?  [ext2]? xfs
+
+Start? 2048s
+End? 1000MB
+
+# cập nhật hệ thống
+udevadm settle
+```
+
+Sử dụng 1 câu lệnh ngắn gọn:
+```bash
+parted /dev/vdb mkpart userdata xfs 2048s 1000MB
+```
+
+**Xóa phân vùng (áp dụng cho cả MBR và GPT)**
+
+```bash
+# Vào tương tác mode
+parted /dev/vdb
+
+# lấy thông tin về số thứ tự của phân vùng
+(parted) print
+
+Number  Start   End     Size   File system  Name       Flags
+ 1      1049kB  1000MB  999MB  xfs          userdata
+
+# xóa phân vùng
+(parted) rm 1
+```
+
+Nếu phân vùng vừa xóa từng được gắn tự động qua fstab, cần xóa dòng tương ứng trong /etc/fstab để tránh lỗi khi khởi động
+
+Xóa phân vùng bằng 1 lệnh:
+```bash
+parted /dev/vdb rm 1
+```
+
+**Tạo file system (hệ thống tệp)**
+
+Sau khi tạo phân vùng, cần phải tạo file system để có thể lưu trữ và quản lý dữ liệu trên đó
+
+Các hệ thống tệp được hỗ trợ trên RHEL:
+- xfs: mặc định và được khuyên dùng
+- ext4 : phổ biến, linh hoạt
+- ngoài ra còn 1 số loại file system tùy nhu cầu sd: vfat, ntfs...
+
+Tạo file system:
+```bash
+mkfs.xfs /dev/vdb1
+
+mkfs.ext4 /dev/vdb1
+```
+
+Lệnh mkfs.* sẽ xóa toàn bộ dữ liệu nếu phân vùng đã có dữ liệu trước đó
+
+**Mount file system**
+
+Bước cuối cùng là mount thư mục vào phân vùng để sd
+```bash
+mount /dev/vdb1 /mnt # thư mục mount point /mnt phải tồn tại
+```
+
+Sau khi mount, các dữ liệu của phân vùng có thể truy cập khi vào folder đã mount
+
+Kiểm tra lại thư mục xem đã mount chưa
+```bash
+mount | grep vdb1
+
+/dev/vdb1 on /mnt type xfs (rw,relatime,...)
+```
+
+Để mount vĩnh viễn (tự động mount lại sau khi reboot), thêm line vào file /etc/fstab theo cấu trúc
+
+```bash
+<device> <mount_point> <filesystem_type>   <options> <dump> <fsck>
+```
+
+Để lấy thông tin file system. sd lệnh 'llsblk'
+```bash
+lsblk - fs
+
+# thêm dòng vào /etc/fstab
+UUID=a1234bcd-56ef-7890-gh12-ijkl3456mnop   /mnt   xfs   defaults   0 0
+```
+
+Tải lại cấu hình fstab (ko cần rebot)
+```bash
+systemctl daemon-reload
+```
+
+Lưu ý: nhập sai trong /etc/fstab có thể khiến hệ thống ko khởi động được. Thực hiện ktra bằng:
+```bash
+findmnt --verify
+```
+
+### 7.2. Quản lý Swap space
+ 
+Swap space là một vùng trên ổ đĩa, được quản lý bởi hệ thống quản lý bộ nhớ của kernel
+
+Swap space được dùng để bổ sung RAM cho hệ thống bằng cách giữa các trang ko hoạt động trong memory
+
+Bộ nhớ ảo (virtual memory) của hệ thống bao gồm RAM và Swap
+
+Flow hoạt động:
+- Khi RAM sắp hết, kernel tìm các trang bộ nhớ ít được sử dụng (idle memory page)
+- Các trang này (idle page) được ghi vào swap
+- RAM lúc này sẽ được reassigne cho các tiến trình khác đang cần
+- Khi chương trình (program) cần dữ liệu đã bị swap -> kernel swap 1 idle page khác sang ổ đĩa -> tải lại page cần dùng từ page vào RAM
+
+Lưu ý:
+- Swap chậm hơn RAM rất nhiều vì nằm trên ổ đĩa
+- Ko nên dùng Swap để thay thế RAM, nó chỉ là hỗ trợ tạm thời
+
+**Tính dung lượng swap space**
+
+Việc tính toán swap space hợp lý rất quan trọng để đảm bảo hiệu năng và tính ổn định của hệ thống:
+- Swap là bộ nhớ phụ của RAM, tính toán đúng swap giúp hệ thống sông sót qua các tình huống thiếu RAM tạm thời
+- Đảm bảo chức năng ngủ đông (hibernation) hoạt động: cần Swap > RAM để lưu toàn bộ nội dung của RAM -> Swap
+- Phù hợp với yêu cầu workload của hệ thống
+
+Bảng khuyến nghị:
+| **Dung lượng RAM** | **Dung lượng Swap đề xuất** | **Nếu cần Hibernation**         |
+| ------------------ | --------------------------- | ------------------------------- |
+| ≤ 2 GB             | Gấp **2 lần** RAM           | Gấp **3 lần** RAM               |
+| 2 GB – 8 GB        | **Bằng** RAM                | Gấp **2 lần** RAM               |
+| 8 GB – 64 GB       | **Ít nhất 4 GB**            | Gấp **1.5 lần** RAM             |
+| > 64 GB            | **Ít nhất 4 GB**            | ❌ Không khuyến nghị hibernation |
+
+**Tạo swap space**
+
+Tương tự việc tạo 1 phân vùng:
+```bash
+# interactive mode
+[root@host ~]# parted /dev/vdb
+
+# tạo phân vùng và điền thông tin 
+(parted) mkpart
+
+Partition name?  []? swap1
+File system type?  [ext2]? linux-swap
+Start? 1001MB
+End? 1257MB
+
+# cập nhật
+[root@host ~]# udevadm settle
+
+# sửa file /etc/fstab nếu cần
+```
+
+**Format swap space**
+
+Sử dụng lệnh 'mkswap' để gắn chữ ký swap lên phân vùng.
+
+Hệ thống sẽ ko định dạng toàn bộ như mkfs mà chỉ ghi 1 block đầu -> phần còn lại kernel dùng để chứa các memory page
+
+```bash
+[root@host ~]# mkswap /dev/vdb2
+Setting up swapspace version 1, size = 244 MiB (255848448 bytes)
+no label, UUID=39e2667a-9458-42fe-9665-c5c854605881
+```
+
+**Active swap space**
+
+```bash
+# kích hoạt
+swapon /dev/vdb2
+
+# xem kết quả sau khi bật swap
+free
+swapon --show
+
+# tắt swap
+swapoff /dev/vdb2
+
+# kích hoạt tất cả các swap space đã được list trong /etc/fstab
+swapon -a
+```
+
+Nếu tắt swap đang chứa dữ liệu, swapoff sẽ:
+- Cố gắng chuyển dữ liệu của swap đó về RAM hoặc sang các swap space khác
+- Nếu ko đủ RAM, hệ thống sẽ báo lỗi
+
+**Active swap space vĩnh viễn**
+
+Thêm nội dung vào /etc/fstab
+```bash
+UUID=39e2667a-9458-42fe-9665-c5c854605881   swap   swap   defaults   0 0
+```
+
+Ý nghĩa từng trường thông tin:
+| **Trường**                  | **Ý nghĩa**                                                                                    |
+| --------------------------- | ---------------------------------------------------------------------------------------------- |
+| `UUID=...` hoặc `/dev/vdb2` | Thiết bị swap (ưu tiên dùng `UUID` để tránh thay đổi thứ tự thiết bị)                          |
+| `swap`                      | Trường "mount point", dùng từ khóa `swap` vì thiết bị swap không được gắn vào hệ thống tập tin |
+| `swap`                      | Loại hệ thống tập tin (filesystem type)                                                        |
+| `defaults`                  | Tùy chọn mount, bao gồm `auto` để bật khi khởi động                                            |
+| `0`                         | Không cần sao lưu (dump)                                                                       |
+| `0`                         | Không kiểm tra hệ thống tập tin (fsck)                                                         |
+
+
+Tìm lại UUID của phân vùng
+```bash
+lsblk --fs
+```
+
+Cập nhật lại cấu hình
+```bash
+systemctl daemon-reload
+```
+
+**Thiết lập độ ưu tiên của swap space**
+
+Thiết lập độ ưu tiên -> hệ thống ưu tiên dùng swap có độ ưu tiên cao hơn trước
+
+Khi vùng ưu tiên cao đầy -> chuyển sang vùng có ưu tiên thấp hơn
+
+Nếu nhiều swap space cùng priority -> kernel dùng theo Round-Robin
+
+Mặc định, tất cả swap có độ ưu tiên là -2
+
+Thiết lập swap space priority trong /etc/fstab
+```bash
+UUID=<uuid>  swap  swap  pri=<số_ưu_tiên>  0 0
+
+UUID=af30cbb0-3866-466a-825a-58889a49ef33   swap  swap  defaults       0 0   # priority = -2 (mặc định)
+UUID=39e2667a-9458-42fe-9665-c5c854605881   swap  swap  pri=4          0 0
+UUID=fbd7fa60-b781-44a8-961b-37ac3ef572bf   swap  swap  pri=10         0 0
+
+# pri=10 → dùng trước
+# pri=4 → khi pri=10 đầy
+# pri=-2 (mặc định) → dùng cuối cùng
+```
+
+## Chapter 8: Quản lý Storage Stack
+
+### 8.1. Logical Volume Manager (LVM)
+
+LVM là lớp trung gian giữa phần mềm và phần cứng lưu trữ, giúp:
+- Trừu tượng hóa cấu hình ổ đĩa vật lý
+- Dễ dàng mở rộng, thu hẹp dung lượng
+- Quản lý hiệu quả nhiều loại lưu trữ
+
+Thành phần chính:
+- Physical devices: các ổ đĩa vật lý, các phân vùng, RAID, SAN disk...
+- Physical volumes (PV): các đĩa vật lý/phân vùng đã được khỏi tạo bằng 'pvcreate', được chia nhỏ thành các Physical Extent (PE)
+- Volume groups (VG): 1 nhóm chứa 1 hoặc nhiều PV, tương đương 1 ổ đĩa logic
+- Logical volume (LV): ko gian lưu trữ thực tế, được tạo từ các LE (logical extent) trong VG (mỗi lE ánh xạ một PE)
+
+**Flow hoạt động**
+
+![LVM](pic/LVM.png)
+
+Chuẩn bị physical device
+```bash
+[root@host ~]# parted /dev/vdb mklabel gpt mkpart primary 1MiB 769MiB
+...output omitted...
+[root@host ~]# parted /dev/vdb mkpart primary 770MiB 1026MiB
+[root@host ~]# parted /dev/vdb set 1 lvm on
+[root@host ~]# parted /dev/vdb set 2 lvm on
+[root@host ~]# udevadm settle
+```
+
+Tạo LVM physical volume
+```bash
+[root@host ~]# pvcreate /dev/vdb1 /dev/vdb2
+  Physical volume "/dev/vdb1" successfully created.
+  Physical volume "/dev/vdb2" successfully created.
+  Creating devices file /etc/lvm/devices/system.devices
+```
+
+Tạo volume group
+```bash
+[root@host ~]# vgcreate vg01 /dev/vdb1 /dev/vdb2
+  Volume group "vg01" successfully created
+```
+
+Tạo logical volume
+```bash
+# theo dung lượng
+[root@host ~]# lvcreate -n lv01 -L 300M vg01 
+  Logical volume "lv01" created.
+
+# theo số lượng PE
+lvcreate -n lv01 -l 32 vg01  # 32 PEs × 4MiB = 128MiB
+```
+
+**Tạo Logical Volume hỗ trợ VDO (optional)**
+
+RHEL 9 dùng LVM Virtual Data Optimizer (VDO) để quản lý các VDO volume
+
+VDO cung cấp:
+- Deduplication (khử trùng lặp) -> xóa các block trùng lặp để tiết kiệm ko gian
+- Nén (compression) - > lưu được nhiều hơn
+- Thin provisioning (cấp phát lưu trữ nhiều hơn dung lượng thực)
+
+Các bước tạo LVM VDO:
+```bash
+# cài công cụ
+[root@host ~]# dnf install vdo kmod-kvdo
+
+# tạo LVM VDO
+[root@host ~]# lvcreate --type vdo --name vdo-lv01 --size 5G vg01
+```
+
+Tạo file system trên các Logical Volume:
+- Tạo định dạng trên logical volume
+```bash
+mkfs -t xfs /dev/vg01/vdo-lv01
+```
+- Tạo mount point (thư mục để gán ổ)
+```bash
+mkdir /mnt/data
+```
+- Mount logical volume 
+```bash
+# thủ công
+mount /dev/vg01/vdo-lv01 /mnt/data
+
+# tự động - sử dụng /etc/fstab
+# viết thông tin vào file cấu hình
+/dev/vg01/vdo-lv01 /mnt/data xfs defaults 0 0
+
+# chạy lệnh mount
+mount /mnt/data
+```
+
+### 8.2. Xem các thông tin của từng thành phần LVM
+
+**Thông tin Physical Volume**
+
+![LVM-PV](pic/LVM-PV.png)
+
+**Thông tin Volume Group**
+
+![LVM-VG](pic/LVM-VG.png)
+
+**Thông tin Logical Volume**
+
+![LVM-LV](pic/LVM-LV.png)
+
+### 8.3. Quy trình mở rộng/ giảm ko gian lưu trữ bằng LVM
+
+**Mở rộng size Volume Group**
+
+Tạo thêm LVM physical volume, sau đó dùng lệnh 'vgextend'
+```bash
+vgextend vg01 /dev/vdb3
+```
+
+**Mở rộng size Logical Volume**
+
+Điều kiện mở rộng là VG tương ứng còn thừa dung lượng
+```bash
+[root@host ~]# lvextend -L +500M /dev/vg01/lv01
+```
+
+**Mở rộng hệ thống tập tin**
+
+| Đặc điểm                            | `xfs_growfs`                                           | `resize2fs`                                                |
+| ----------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------- |
+| Hệ thống tập tin hỗ trợ             | Chỉ `XFS`                                              | `ext2`, `ext3`, `ext4`                                     |
+| Hình thức resize                    | Chỉ **mở rộng (extend)**                               | Có thể **mở rộng và thu nhỏ (shrink)**                     |
+| Có cần mount không?                 | **Phải** được mount                                    | Có thể resize khi đang mount (online) hoặc không (offline) |
+| Cách sử dụng                        | Dùng **mount point**                                   | Dùng **device name**                                       |
+| Có cần tắt hệ thống không?          | Không                                                  | Không, nếu online; Có thể có, nếu offline                  |
+| Lệnh mở rộng tự động sau `lvextend` | Có thể dùng `lvextend -r` để tự resize sau khi mở rộng | Cũng hỗ trợ qua `-r`                                       |
+
+**Mở rộng swap space trên LVM**
+
+```bash
+# tắt swap trên logical volume
+swapoff -v /dev/vg01/swap
+
+# mở rộng logical volume
+lvextend -L +300M /dev/vg01/swap
+
+# định dạng lại logical volume
+mkswap /dev/vg01/swap
+
+# bật lại swap 
+swapon /dev/vg01/swap
+```
+
+**Giảm dung lượng của volume group**
+
+Việc giảm dung lượng VG liên quan đến việc loại bỏ PV khỏi VG. Tuy nhiên, nó không liên quan đến việc giảm dung lượng các LV.
+
+Một số file system không hỗ trợ thu nhỏ: XFS, GFS2
+
+Các bước giảm size VG:
+```bash
+# di chuyển dữ liệu từ PV sẽ xóa sang PV khác cùng VG
+pvmove -A y /dev/vdb3
+
+# xóa PV khỏi VG
+vgreduce vg01 /dev/vdb3
+```
+
+**Xóa LVM Storage**
+
+```bash
+# unmount file system
+umount /mnt/data
+
+# xóa logical volume
+lvremove /dev/vg01/lv01
+
+# xóa volume group
+vgremove vg01
+
+
+# xóa physical volume
+pvremove /dev/vdb1 /dev/vdb2
+```
+
+Nhớ xóa dòng thông tin trong /etc/fstab
+
+### 8.4. Quản lý lưu trữ nhiều lớp (Layered Storage)
+
+**Storage stack**
+
+Storage trong RHEL gồm nhiều lớp đã hoàn thiện, ổn định và nhiều tính năng hiện đại.
+
+Việc quản lý lưu trữ cần sự quen thuộc với từng stack, và nhận biết các cấu hình lưu trữ ảnh hưởng đến quá trình khởi động, hiệu suất ứng dụng cũng như khả năng cung cấp các tính năng lưu trữ phù hợp cho từng TH
+
+![storage-stack](pic/storage-stack.png)
+
+**Block device**
+
+Block device là loại thiết bị lưu trữ mà dữ liệu được đọc/ghi theo khối (block) có kích thước cố định
+
+Layer thấp nhất, cung cấp giao thức thiết bị ổn định và thống nhất
+
+Hầu hết các block device đều có thể truy cập, điều khiển thông qua RHEL SCSI driver: HDD, SSD, NVMe hay ổ ATA đời cũ...
+
+RHEL hỗ trợ nhiều loại block device:
+- ATA/SATA HDD & SSD: kết nối truyền thống qua cổng SATA hoặc PATA
+- NVMe (Non-Volatile Memory Express): Giao tiếp trực tiếp qua PCIe, tốc độ cao hơn SATA.
+- iSCSI (Internet Small Computer Systems Interface): Giao thức SCSI truyền qua mạng TCP/IP. Mục tiêu là thiết bị lưu trữ ở xa, truy cập block device dưới dạng LUN.
+- FCoE (Fibre Channel over Ethernet): Truyền dữ liệu Fibre Channel qua hạ tầng Ethernet. Cho phép hợp nhất LAN và SAN trên cùng hệ thống mạng vật lý -> Giảm chi phí phần cứng và cáp.
+- SAS (Serial Attached SCSI): Kết nối lưu trữ tốc độ cao, dùng trong máy chủ và thiết bị lưu trữ doanh nghiệp.
+- Virtio Block Device (trong máy ảo): Tối ưu hóa hiệu năng truy cập I/O giữa máy ảo và host.
+
+**Multipath**
+
+Một path là một kết nối giữa server và storage.
+
+dm-multipath (Device Mapper Multipath) gộp nhiều path thành một thiết bị logic duy nhất trong /dev/mapper/.
+
+Nếu storage kết nối qua mạng thì có thể dự phòng bằng cách sử dụng network bonding
+
+**Partition**
+
+Phân vùng chia block device thành nhiều phần logic
+
+Sử dụng phân vùng để tạo file system, làm LVM PV hoặc lưu trữ trực tiếp cho database
+
+**RAID**
+
+RAID tạo volume logic từ nhiều đĩa vật lý/ảo
+
+LVM hỗ trợ RAID level 0,1,4,5,6 và 10
+
+RAID logical volune được tạo và quản lý bởi LVM sử dụng mdadm kernel driver. Nếu ko sử dụng LVM thì kernel sử dụng dm-raid
+
+**LVM**
+
+LVM xếp chồng (stack) nhiều loại block device để tạo volume logic
+
+Tính năng nâng cao:
+- LUKS encryption (mã hóa toàn thiết bị)
+- VDO deduplication & compression
+
+Có thể kết hợp LUKS và VDO trên cùng LVM
+
+**File System hoặc Raw storage**
+
+File system: lưu trữ file (XFS, ext4...) nhưng RHEL khuyến nghị XFS
+
+Raw storage dùng cho DB hoặc ứng dụng cần truy cập trực tiếp, bỏ qua file system caching
+
+Ceph OSD cũng sd raw device hoặc LVM
+
+**Stratis - Storage management hiện đại**
+
+Stratis là một tool quản lý storage được phát triển bới Red Hat và upstream Fedora
+
+Stratis cấu hình các initial storage, thay đổi cấu hình các storage và sử dụng các tính năng mới của storage
+
+Stratis dựng file system từ các pool gồm các thiết bị lưu trữ bằng cách sd thin provisioning.
+
+Thay vì lập tức cấp phát các không gian lưu trữ vật lý cho các file system khi tạo, Stratis sẽ linh động cấp phát thêm các không gian từ pool khi file system lưu trữ thêm dữ liệu.
+
+Thông tin file system có thể là 1 TiB, nhưng thực tế storage nó sử dụng chỉ có 100 GiB được cấp phát từ pool
+
+![stratis](pic/stratis.png)
+
+**Các thao tác với Stratis**
+
+Cài đặt và khởi động dịch vụ
+```bash
+dnf install stratis-cli stratisd
+
+systemctl enable --now stratisd
+```
+
+Tạo pool
+```bash
+stratis pool create pool1 /dev/vdb
+
+# xem ds pool
+stratis pool list
+
+# xem block device trong pool
+stratis blockdev list pool1
+
+# thêm device vào pool
+stratis pool add-data pool1 /dev/vdc
+```
+
+**Quản lý file system**
+```bash
+stratis filesystem create pool1 fs1
+
+# list ds các file system
+stratis filesystem list
+
+# tạo snapshot cho file system
+stratis filesystem snapshot pool1 fs1 snapshot1
+```
+
+Mount file system vĩnh viễn:
+```bash
+# Lấy UUID của file system
+lsblk --output=UUID /dev/stratis/pool1/fs1
+
+# thêm vào etc/fstab
+UUID=<uuid> /dir1 xfs defaults,x-systemd.requires=stratisd.service 0 0
+```
+
+Lưu ý:
+- Khi đã tạo file system bằng Stratis, ko chỉnh thủ công bằng LVM hay mkfs
+- Không dùng df để ktra dung lượng vì XFS trong Stratis luôn báo 1 TiB -> dùng 'stratis pool list'
+
+## CHapter 9: Truy cập lưu trữ qua mạng (network-attached storage)
+
+### 9.1. Quản lý network-attached storage bằng NFS
+
+Network file system (NFS) là giao thức chuẩn để chia sẻ file giữa Linux/UNIX qua mạng
+
+NFS server export các thư mục, sau đó NFS client mount các thư mục đã export vào các thư mục mount point ở local.
+
+NFS client có nhiều cách để mount các thư mục đã export:
+- Manually: sử dụng lệnh 'mount'
+- Persistent at boot: config file /etc/fstab
+- On demand: cấu hình một phương pháp tự động mount (autofs, systemd.automount)
+
+**Truy vấn thông tin export**
+
+Với NFSv3, sử dụng RPC và yêu cầu rpcbind chạy trên server
+```bash
+showmount --exports server
+
+Export list for server
+/shares/test1
+/shares/test2
+```
+
+Với NFSv4, không dùng rpc, lệnh 'showmount' sẽ bị timeout. Để xem export directory cần mount root của export tree rồi tìm
+
+```bash
+[root@host ~]# mkdir /mountpoint
+[root@host ~]# mount server:/ /mountpoint
+[root@host ~]# ls /mountpoint
+```
+
+**Mount các NFS export directory thủ công (tạm thời)**
+
+```bash
+# tạo mount point 
+[root@host ~]# mkdir /mountpoint
+
+# mount export directory vào mount point vừa tạo
+[root@host ~]# mount -t nfs -o rw,sync server:/export /mountpoint
+
+# -t nfs: loại file system là NFS
+# -o rw,sync: tùy chọn mount, cho phép đọc/ghi và đồng bộ dữ liệu
+# server:/export: server là hostname/IP của NFS server, /export là thư mục chia sẻ
+# /mountpoint: thư mục mount trên client
+```
+
+**Mount các NFS export directory tự động (vĩnh viễn)**
+```bash
+# mỏ file /etc/fstab, thêm dòng sau
+server:/export   /mountpoint   nfs   rw   0 0
+
+# gõ lệnh
+mount /mountpoint
+```
+
+Nhược điểm: nếu khi boot mà NFS server chưa sẵn sàng, có thể làm chậm/treo tiến trình boot
+
+**Unmount NFS export**
+
+Sử dụng lệnh 'umount'
+```bash
+umount /mountpoint
+
+# cần xóa dòng trong /etc/fstab
+```
+
+Nếu unmount gặp lỗi 'device is busy' khi umount, nguyên nhân có thể do:
+- một ứng dụng vẫn mở file trên NFS export
+- một shell của user đang ở trong thư mục mount point hoặc thư mục con của nó
+
+Giải quyết:
+- rời khỏi thư mục cần unmount bằng cách cd sang thư mục khác
+- tìm tiến trình đang giữ file và kill tiến trình
+```bash
+# tìm tiến trình đang giữ file
+lsof /mountpoint
+```
+- Sử dụng force 'umount -f /mountpoint'
+
+### 9.2. Tự động mount network-attached storage
+
+Automounter (autofs) là một dịch vụ tự đọng mount và unmount file system hoặc NFS export theo nhu cầu
+
+Khi người dùng hoặc ứng dụng truy cập vào mount point → autofs sẽ mount ngay lập tức.
+
+Khi không còn tiến trình hoặc người dùng nào sử dụng → autofs tự unmount sau một khoảng timeout ngắn.
+
+Vấn đề mà auto mount giải quyết:
+- Người dùng không có quyền mount (mount thủ công yêu cầu root/sudo).
+- Thiết bị/FS không mount từ đầu (fstab chỉ mount khi boot).
+- Không cần giữ FS luôn mounted → tiết kiệm tài nguyên & giảm nguy cơ lỗi
+
+Lợi ích của autofs
+- Tiết kiệm tài nguyên: FS idle hoặc unmount gần như không tốn RAM/CPU.
+- Giảm rủi ro hỏng dữ liệu: FS không bị treo mở khi không sử dụng.
+- Luôn dùng config mới nhất: mỗi lần mount sẽ lấy cấu hình mount hiện tại (khác fstab mount 1 lần khi boot).
+- Chọn đường nhanh nhất: Nếu NFS có nhiều server dự phòng, autofs có thể chọn kết nối tối ưu mỗi lần mount.
+- Không cần root để mount: autofs làm việc trong background, mount khi người dùng truy cập.
+
+Nguyên lý hđ:
+- Tương tự với cách mount thủ công bằng /etc/fstab
+- Khi cần mount, autofs gọi lệnh mount và khi unmount, autofs gọi lệnh umount
+
+| Đặc điểm                    | `/etc/fstab`            | `autofs`                       |
+| --------------------------- | ----------------------- | ------------------------------ |
+| Thời điểm mount             | Khi boot                | Khi có truy cập                |
+| Thời điểm unmount           | Khi shutdown            | Khi idle + timeout             |
+| Dùng config mới nhất        | ❌ (phải reboot/remount) | ✅ (mỗi lần mount)              |
+| Tiết kiệm tài nguyên        | ❌                       | ✅                              |
+| Yêu cầu quyền root để mount | ✅                       | ❌ (tự mount khi user truy cập) |
+
+**Auto mount direct map and indirect map**
+
+Direct map:
+- Mount point cố định, đã biết trước
+- Thư mục mount tồn tại vĩnh viễn trong hệ thống (ngay cả khi chưa mount)
+- Cấu hình thường nằm trong /etc/auto.master trỏ đến file map /etc/auto.direct
+- Khi truy cập mount point, autofs mount ngay system đã định
+
+```bash
+# file /etc/auto.master
+/-    /etc/auto.direct
+
+# /- nghĩa là direct map, các mount point được định nghĩa ở file /etc/auto.direct
+
+# file /etc/auto.direct
+/projects  -rw,sync  nfs-srv:/export/projects
+
+# /project: mount point tuyệt đối
+```
+
+Indirect map:
+- Mount point gốc cố định, nhưng thư mục con bên trong được tạo/xóa động khi cần
+- Mount path chưa biết trước cụ thể đến thư mục con
+- Thường dùng khi thư mục con thay đổi tùy người dùng, phiên làm việc hoặc tài nguyên động
+- Autofs sẽ tạo thư mục con khi có yêu cầu mount và xóa sau khi unmount
+
+```bash
+# file /etc/auto.master
+/home    /etc/auto.home
+
+# /home là điểm mount gốc của các thư mục con
+# /etc/auto.home là file chứa danh sách các mount point
+
+# file /etc/auto.home
+user1   -rw,sync  nfs-srv:/export/home/user1
+user2   -rw,sync  nfs-srv:/export/home/user2
+
+# user1: tên thư mục con -> /home/user1
+# user2: tên thư mục con -> /home/user2
+```
+
+**Các bước cấu hình dịch vụ auto mount**
+
+Master map file là file cấu hình mặc định của dịch vụ 'autofs'. Có thể sửa file /etc/autofs.conf để đổi master map file.
+
+Mỗi dòng có cấu trúc;
+```bash
+mount-point     map-file
+
+# mount-point: thư mục gốc mà autofs quản lý
+# map-file: file cấu hình cac mount point con
+```
+
+Có thể sd 1 file chứa nhiều dòng mount-point hoặc tạo nhiều file trong folder /etc/auto.master.d/ với đuôi .autofs, mỗi file gom nhóm các cấu hình liên quan
+
+Map file là file map chứa cấu hình chi tiết của từng mount point con. Mỗi dòng có dạng
+```bash
+mount-point     mount-options     source-location
+
+# mount-point không có '/' ở đầy -> indirect map
+# mount-point có ghi đường dẫn tuyệt đối -> direct map
+```
+
+Với indirect map, có thể dùng wildcard để rút ngắn số lượng dòng cần viết
+```bash
+# file /etc/auto.master
+/shares   /etc/auto.direct
+
+#file /etc/auto.direct
+*  -rw,sync  hosta:/shares/&
+
+# * là wildcard key
+# & là place holder đẻ chèn lại giá trị key khớp với *
+
+# khi client có user truy cập /shares/docs thì sẽ mount thư mục tương ứng ở server /shares/docs
+```
+
+Với direct map, mount point trong /etc/auto.master luôn là /- vì file map cần chứa đường dẫn tuyệt đối
+
+**Chạy dịch vụ auto mount**
+
+Sử dụng autofs:
+- Tạo master map file /etc/auto.master
+- Tạp map file /etc/auto.direct hoặc /etc/auto.indirect
+- Bật dịch vụ
+```bash
+systemctl enable --now autofs
+```
+
+Sử dụng systemd.automount:
+- Cấu hình automount ngay trong /etc/fstab bằng cashch thêm tùy chọn 'x-systemd.automount' vào thư mục cần mount
+```bash
+# file /etc/fstab
+hosta:/shares/docs   /mnt/docs   nfs   rw,sync,x-systemd.automount   0 0
+```
+- Reload lại systemd và chạy dịch vụ
+```bash
+systemctl daemon-reload
+# systemd sẽ tạo file unit .automount từ cấu hình
+
+systemctl start mnt-docs.automount
+```
+
+So sánh:
+| Tiêu chí                | autofs                           | systemd.automount                        |
+| ----------------------- | -------------------------------- | ---------------------------------------- |
+| Loại path hỗ trợ        | Indirect + Direct                | Chỉ Direct (absolute path)               |
+| Cấu hình                | File master map + map file riêng | Ngay trong `/etc/fstab`                  |
+| Linh hoạt wildcard      | Có (`*` và `&`)                  | Không                                    |
+| Quản lý mount NFS nhiều | Tiện hơn, dễ nhóm cấu hình       | Không linh hoạt như autofs               |
+| Phụ thuộc               | autofs service                   | systemd (có sẵn trên mọi Linux hiện đại) |
+
+## Chapter 10: Điều khiển tiến trình khởi chạy (boot process)
+
+### 10.1. Quy trình boot của RHEL 9 (x86_64)
+
+![boot-proc](pic/boot-proc.png)
+
+B1: Khi bật máy, BIOS hoặc UEFI chạy Power on self test (POST) để kiểm tra phần cứng
+
+B2: Firmware (phần mềm) tìm thiết bị boot 
+- Với BIOS -> tìm các ổ đĩa được chọn làm boot loader theo thứ tự trong cấu hình boot order -> nếu MBR trên ổ đĩa hợp lệ, BIOS sẽ nhảy vào boot loader code để nạp hệ điều hành
+- với UEFI -> boot manager của UEFI sẽ đọc boot order từ NVRAM -> trên từng thiết bị, UEFI tìm xem nó có ESP không, sau đó vào thư mục /EFI/BOOT/ hoặc các thư mục cụ thể cho từng hệ điều hành và lấy file boot loader .efi -> nạp file vào RAM để thực thi
+
+B3: Nạp boot loader
+
+GRUB2 là boot loader mặc định của RHEL 9
+- BIOS: GRUB2 nằm trong MBR/boot sector
+- UEFI: Dùng file /boot/efi/EFI/redhat/grubx64.efi (có chữ ký số để Secure Boot hoạt động).
+
+Lưu ý: ko dùng 'grub2-install' trên UEFI vì nó sẽ tạo mới file grubx64.efi từ mã nguồn hiện có -> file mới này ko có chữ ký số hợp lệ -> Secure boot sẽ chặn và hệ thống ko boot được
+
+Nếu lỡ xóa/ghi đè grubx64.efi, khôi phục file chuẩn bằng dnf hặc yum
+```bash
+dnf reinstall grub2-efi-x64
+
+yum reinstall grub2-efi-x64
+```
+
+B4: GRUB2 lấy cấu hình từ các file cấu hình đã nạp
+
+Grub2 sẽ tự tìm đến file grub.cfg phù hợp với chế độ boot và đọc các entry:
+- Với BIOS, file cấu hình chính nằm ở '/boot/grub2/grub.cfg'
+- Với UEFI, cấu hình chính nằm ở '/boot/efi/EFI/redhat/grub.cfg'
+
+File grub.cfg không thể cấu hình vì nó được sinh tự động, grub2 lấy thông tin từ 2 nguồn:
+- '/etc/grub.d/' - chứa các script tạo từng phần của grub.cfg
+
+```bash
+00_header -> thiết lập chung
+10_linux -> tạo menu boot cho các kernel linux
+```
+
+- '/etc/default/grub/' - chứa các biến cấu hình chính
+```bash
+GRUB_TIMEOUT=5
+GRUB_DEFAULT=0
+GRUB_CMDLINE_LINUX="rhgb quiet"
+```
+
+Để tạo lại file grub.cfg sau khi cấu hình 2 file trên, chạy lệnh:
+```bash
+# BIOS
+grub2-mkconfig -o /boot/grub2/grub.cfg
+
+# UEFI
+grub2-mkconfig -o /boot/efi/EFI/redhat/grub.cfg
+```
+
+B5: Sau khi grub2 chọn kernel để boot -> kernel và initramfs được tải vào RAM
+
+Kernel (vmlinuz-*) là nhân linux, điều khiển phần cứng và quản lý tài nguyên hệ thống
+
+Initramfs (initramfs-<kernel-version>.img) là một image RAM ảo (archive .cpio.gz) chứa:
+- kernel modules cho các thiết bị cần thiết khi boot
+- scripts khởi tạo
+- root filesystem tạm thời để kernel khởi chạy trước khi mount root FS thật
+- systemd unit ở chế độ initramfs
+
+Quá trình:
+- load file kernel và file initramfs vào RAM
+- kernel bắt đầu chạy nhưng chưa mount vào FS thật mà mount vào initramfs làm hệ thống tạm
+- systemd trong initramfs thực thi các script
+- switch root từ initramfs sang root thật
+
+Cấu hình initramfs:
+
+Từ RHEL 9, initramfs được tạo bởi dracut với file cấu hình nằm ở '/etc/dracut.conf.d'
+
+```bash
+# lệnh tạo lại initramfs
+dracut -f /boot/initramfs-$(uname -r).img $(uname -r)
+
+# ktra nội dung initramfs
+lsinitrd /boot/initramfs-$(uname -r).img
+```
+
+B6: Giao quyền từ boot loader sang kernel
+
+Sau khi tải kernel và initramfs vào RAM, grub2 sẽ:
+- Nhảy sang địa chỉ bắt đầu của kernel trong bộ nhớ
+- Truyền các tham số dòng lệnh kernel (kernel command line)
+
+B7: Kernel bắt đầu thực thi script sau khi grub2 giao quyền điều khiển
+
+Kernel được tải vào RAM và bắt đầu chạy:
+- Quét phần cứng
+- Nạp driver từ initramfs nếu thấy module phù hợp (nếu driver cần thiết để đọc root file system ko có trong initramfs -> ko boot được với lỗi kernel panic)
+
+Kernel chạy tiến trình /sbin/init từ initramfs:
+- sau khi phần cứng cơ bản đã sẵn sàng, kernel tìm tiến trình đầu tiên (PID 1)
+- /sbin/init trong initramfs không phải là file binary mà là symlink trỏ tới systemd unit trong RHEL 9
+- Systemd lúc này chạy trong môi trường root tạm thời trong initramfs
+
+B8: Systemd chạy trong môi trường initramfs thực hiện tất cả các unit trong initrd.target
+
+Initrd.target gồm các unit cần thiết để mount root file system thật trên ổ đĩa vào thư mục tạm thời /sysroot
+
+Cấu hình đường dẫn các root file system được xác định trong file /etc/fstab
+
+B9: Kernel thay đổi (pivots) các root file system từ initramfs sang hệ thống thật
+
+Sau khi các root file system thật đã được mount vào /sysroot ở bước trước, kernel thay đổi root file system sang /sysroot
+
+Lúc này, /sysroot trở thành '/' và initramfs bị unmount (giải phóng RAM)
+
+Systemd trong initramfs lúc này re-exec chính nó bằng bản systemd nằm trên root thật
+
+Toàn bộ unit và service lúc này sẽ chạy dựa trên config thật trong /etc/systemd/system
+
+Nếu pivot thất bại -> hệ thống sẽ lỗi 'emergency shell'
+
+Nguyên nhân thường gặp:
+- Ko tìm thấy thiết bị root
+- Sai UUID/label trong /etc/fstab
+- Initramfs thiếu driver
+
+B10: Systemd tìm các default target và chạy các unit phụ thuộc cũng như dừng các unit xung đột với target
+
+Các default target mặc định:
+- Được pass từ biến 'systemd.unit=' khi chạy kernel command line 
+- Nếu ko có tham số, systemd mặc định đọc file /etc/systemd/system/default.target (thường là 1 symlink tới 1 target thật)
+
+Mỗi target là 1 tập hợp các unit (service, mount, socket...) cần khởi động để đạt trạng thái mong muốn
+
+Ví dụ: graphical.target → khởi động môi trường đồ họa + login GUI
+
+Mỗi target sẽ định nghĩa Requires= và Wants= để kéo theo các unit khác
+
+### 10.2. Power off và Reboot
+
+**Power off**
+
+Sử dụng lệnh
+```bash
+systemctl poweroff
+
+# hoặc
+poweroff
+```
+
+Hoạt động của poweroff:
+- Dừng tất cả các service đang chạy
+- Unmount tất cả các file system (hoặc remount thành read-only nếu không thể unmount hoàn toàn)
+- Gửi tín hiệu tắt nguồn máy
+
+**Reboot**
+
+Sử dụng lệnh
+```bash
+systemctl reboot
+
+# hoặc
+reboot
+```
+
+Tương tự poweroff nhưng thay vì gửi tín hiệu tắt nguồn -> gửi tín hiệu reboot
+
+**Halt**
+
+Lệnh:
+```bash
+systemctl halt
+
+# hoặc
+halt
+```
+
+Không tắt nhuồn mà chỉ dừng hệ thống ở trạng thái an toàn để có thể tắt nguồn thủ công/ bảo trì
+
+### 10.3. Chọn các systemd target
+
+Systemd target là một set gồm các systemd unit mà hệ thống cần khởi chạy để đạt được trạng thái mong muốn
+
+Một số target được sd thường xuyên:
+| Target              | Mục đích                                                                     |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `graphical.target`  | Nhiều người dùng, hỗ trợ login đồ họa và text.                               |
+| `multi-user.target` | Nhiều người dùng, chỉ login dạng text (runlevel 3 cũ).                       |
+| `rescue.target`     | Chế độ một người dùng để sửa lỗi hệ thống (runlevel 1).                      |
+| `emergency.target`  | Hệ thống tối thiểu nhất, dùng khi `rescue.target` cũng không khởi động được. |
+
+Một target có thể là 1 phần của target khác, sử dụng lệnh sau để xem sự phụ thuộc
+
+```bash
+[user@host ~]$ systemctl list-dependencies graphical.target | grep target
+graphical.target
+* └─multi-user.target
+*   ├─basic.target
+*   │ ├─paths.target
+*   │ ├─slices.target
+*   │ ├─sockets.target
+*   │ ├─sysinit.target
+*   │ │ ├─cryptsetup.target
+*   | | ├─integritysetup.target
+*   │ │ ├─local-fs.target
+...output omitted...
+```
+
+Liệt kê các target đang sẵn có:
+```bash
+[user@host ~]$ systemctl list-units --type=target --all
+  UNIT                      LOAD      ACTIVE   SUB    DESCRIPTION
+  ---------------------------------------------------------------------------
+  basic.target              loaded    active   active Basic System
+...output omitted...
+  cloud-config.target       loaded    active   active Cloud-config availability
+  cloud-init.target         loaded    active   active Cloud-init target
+  cryptsetup-pre.target     loaded    inactive dead   Local Encrypted Volumes (Pre)
+  cryptsetup.target         loaded    active   active Local Encrypted Volumes
+...output omitted...
+```
+**Thay đổi target khi hệ thống đang chạy**
+
+Sử dụng lệnh 'systemctl isolate'
+```bash
+systemctl isolate multi-user.target
+```
+
+Khi isolate 1 target:
+- Start các service mà target mới cần mà hệ thống chưa chạy
+- Stop các service mà target mới không cần
+
+Chỉ các target có 'AllowIsoldate=yes' trong unit file mới có thể isolate
+```bash
+[user@host ~]$ systemctl cat graphical.target
+# /usr/lib/systemd/system/graphical.target
+...output omitted...
+[Unit]
+Description=Graphical Interface
+Documentation=man:systemd.special(7)
+Requires=multi-user.target
+Wants=display-manager.service
+Conflicts=rescue.service rescue.target
+After=multi-user.target rescue.service rescue.target display-manager.service
+AllowIsolate=yes
+```
+
+**Thay đổi target mặc định khi boot**
+
+Mỗi lần boot chỉ có duy nhất 1 default target được dùng làm điểm khởi đầu khi hệ thống lên
+
+Thường thì target mặc định ở file /etc/systemd/system/default.target chỉ là 1 symlink trỏ tới 1 unit target thật
+
+Hệ thống boot -> Systemd đọc symlink -> load file .target -> load các dependency
+
+```bash
+# xem default target hiện tại
+[root@host ~]# systemctl get-default
+multi-user.target
+
+# set 1 default target mới
+[root@host ~]# systemctl set-default graphical.target
+Removed /etc/systemd/system/default.target.
+Created symlink /etc/systemd/system/default.target -> /usr/lib/systemd/system/graphical.target.
+```
+
+**Thay đổi target lúc boot (áp dụng cho 1 lần boot)**
+
+Thêm option 'systemd.unit=target.target' vào kernel command line từ menu của boot loader grub2
+
+Thực hiện các bước;
+- Chạy lệnh boot/reboot
+- Ngắt countdown của boot loader grub2 bằng phím bất kỳ (trừ Enter, Enter sẽ thực hiện boot bình thường)
+- Chọn kernel cần boot, bấm e để edit
+- Tìm dòng bắt đầu bằng linux, thêm nội dung vào cuối dòng
+```bash
+systemd.unit=emergency.target
+```
+- Bấm Crtl + X để áp dụng thay đổi và boot 
+
+### 10.4. Reset mật khẩu root
+
+**Reset từ boot loader (nếu install hệ thống từ DVD)**
+
+Task này khá đơn giản nếu admin vẫn đang login vào 1 user có quyền sudo hoặc user root nhưng sẽ phức tạp hơn khi admin không login
+
+Trên RHEL, một số script chạy trong initramfs có thể tạm dừng ở 1 số chỗ. Các scripts này thường dành cho debug và cũng có thể reset mật khẩu root
+
+Các bước thực hiện:
+- Khởi động lại hệ thống -> ngắt countdown của boot loader bằng cách phím bất kỳ (trừ Enter)
+- Chọn kernel boot là rescue kernel
+- Nhấn e để edit
+- Tìm dòng bắt đầu với 'linux' và thêm rd.break vào cuối dòng
+- Ctrl + X để boot với thay đổi
+
+Lúc này hệ thống sẽ dừng ngay trước khi chuyển từ initramfs sang root file system thật
+
+-> Hệ thống sẽ cho ta 1 shell root và root file system thật được mount read-only tại /sysroot
+
+Tiếp tục các bước:
+- Remount /sysroot sang read-write
+```bash
+mount -o remount,rw /sysroot
+```
+
+- Vào chroot jail để /sysroot được thành '/'
+```bash
+chroot /sysroot
+```
+
+- Đặt mk root mới
+```bash
+passwd root
+```
+
+- Đảm bảo hệ thống sẽ relabel tất cả các file chưa được label, bao gồm cả /etc/shadow khi hệ thống boot
+```bash
+touch /.autorelabel
+```
+
+- Gõ exit 2 lần (1 lần thoát khỏi chroot jail và 1 lần thoát khởi debug shell của initramfs)
+
+**Reset trên hệ thống cài từ cloud image**
+
+Nếu cài hệ thống từ cloud image thay vì qua installer, các bước reset gần tương tự với installer nhưng sẽ có 1 vài điểm khác:
+- Không có rescue kernel: vì cloud image ko tạo entry 'rescue' trong grub2 nên thêm luôn 'rd.break' vào kernel mặc định
+- Khác với RHEL cài từ DVD, cloud image cho phép 'rd.break' bypass trực tiếp mà ko hỏi root password để vào maintenance mode
+- Console hiển thị có thể khác, shell của 'rd.break' chỉ hiện ở console cuối cùng trong danh sách nên có thể cần đổi thứ tự 'console=' tamh thời khi edit grub
+
+Quy trình sau khi đã thay đổi:
+- Reboot -> vào menu grub
+- Chọn kernel mặc định -> bấm e để edit
+- Thêm 'rd.break' vào dòng linux
+- Chỉnh lại thứ tự 'console=' để đảm bảo thấy shell
+- Crtl + X để boot
+- Làm các bước remount, chroot, passwd, touch /.autorelabel, rồi thoát tương tự như với rescue kernel
+
+### 10.5. Xem log của những lần boot trước
+
+Nếu các journal của hệ thống tồn tại sau các lần reboot, có thể sd 'journalctl' để kiểm tra các journal log đó
+
+Mặc định, các journal lưu tại thư mục '/run/log/journal' và sẽ bị xóa khi reboot
+
+Để lưu log giữa các lần reboot:
+- Sửa file '/etc/systemd/journald.conf'
+```bash
+[Journal]
+Storage=persistent
+```
+
+- Tạo thư mục '/var/log/journal' nếu chưa có
+- Restart dịch vụ
+```bash
+systemctl restart systemd-journald.service
+```
+
+Lúc này có thể xem log của các lần boot
+```bash
+journalctl -b -1 # lần boot trước
+
+journalctl -b -1 -p err # lần boot trước , chỉ lấy lỗi
+
+journalctl --list-boots # ds các lần boot
+
+journalctl -b <ID> # log theo ID
+```
+
+### 10.6. Chẩn đoán và sửa lỗi khi systemd gặp sự cố trong quá trình boot
+
+**Bật Early debug shell**
+
+```bash
+systemctl enable debug-shell.service
+
+systemctl disable debug-shell.service
+```
+
+Lệnh này sẽ sinh ra 1 root shell ở tty9 (Ctrl+Alt+F9) ngay từ đầu quá trình boot
+
+Ưu điểm:
+- Dùng để debug khi OS chưa boot xong
+- Ko cần mật khẩu
+
+Nhược điểm: rất nguy hiểm vì ai có quyền truy cập console đều có root
+
+Có thể bật tạm thời qua grub:
+- Vào menu grub -> bấm e
+- Tìm dòng kernel -> thêm 'systemd.debug-shell' vào cuối dòng
+- Ctrl+X để boot
+
+**Sử dụng Emerrgency target và Rescue target**
+
+Tương tự các mục trước:
+- Vào menu grub -> bấm e 
+- Tìm dòng kernel và thêm nội dung
+```bash
+systemd.unit=rescue.target
+
+# hoặc
+systemd.unit=emergency.target
+```
+- Ctrl+X
+
+Với emergency.target, muốn sửa file cấu hình cần remount
+```bash
+mount -o remount,rw /
+```
+
+So sánh:
+
+| Mục              | emergency.target                     | rescue.target                         |
+| ---------------- | ------------------------------------ | ------------------------------------- |
+| File system root | read-only                            | read-write (sau sysinit.target)       |
+| Mức init         | Rất tối thiểu                        | Nhiều dịch vụ hơn (logging, mount FS) |
+| Dùng để          | Sửa lỗi /etc/fstab, sự cố mount nặng | Sửa cấu hình dịch vụ, kiểm tra log    |
+
+**Xác định job bị stuck khi boot**
+
+Bật Early debug shell như mục trước hoặc boot vào 2 target trên, sau đó dùng lệnh:
+```bash
+systemctl list-jobs
+```
+
+### 10.7. Sửa các lỗi liên quan đến file system khi boot
+
+Trong quá trình boot, systemd mount các file system cố định được định nghĩa trong /etc/fstab
+
+Lỗi trong /etc/fstab hoặc file system bị lỗi sẽ ngăn hệ thống hoàn thành quá trình boot và trong 1 số TH, sẽ thoát khỏi quá trình boot và mở 1 root shell yêu cầu mk root
+
+**Các lỗi có thể xảy ra**
+
+File system bị honhr (corrupted):
+- systemd gọi fsck để sửa
+- nếu lỗi nặng ko tự sửa được -> mở emergency shell
+
+Thiết bị hoặc UUID ko tồn tại:
+- /etc/fstab tham chiếu tới ổ đĩa hoặc phân vùng đã bị tháo hoặc UUID sai
+- systemd sẽ đợi thiết bị xuất hiện. Nếu quá timeout → emergency shell
+
+**Các bước sửa lỗi khi gặp lỗi file system khi boot**
+
+Thực hiện mở các shell bằng Early debug shell hoặc emergency target, rescue target
+
+Kiểm tra thiết bị và phân vùng:
+```bash
+lsblk
+blkid
+
+# Đảm bảo UUID hoặc device name trong /etc/fstab còn tồn tại.
+```
+
+Sửa file /etc/fstab
+```bash
+mount -o remount,rw /
+vi /etc/fstab
+
+# Sửa hoặc comment (#) các dòng mount bị lỗi.
+# Lưu ý: dùng UUID hoặc LABEL chuẩn xác (blkid để tra).
+```
+
+Kiểm tra/sửa file system
+```bash
+fsck -y /dev/sda1
+
+# -y để tự động chấp nhận sửa lỗi.
+```
+
+Sau khi đã confirm ko còn lỗi, reboot hệ thống
+
+Trong file /etc/fstab, các line có option 'nofail' để cho phép hệ thống boot kể cả khi file system mount ko thành công
+
+Ko nên dùng 'nofail' cho production vì hệ thống sẽ thiếu tệp -> hậu quả nghiêm trọng
+
+## Chapter 11: Quản lý bảo mật cho mạng
+
+### 11.1. Quản lý firewall của server
+
+Linux kernel cung cấp 'netfilter' framework để quản lý các hoạt động của network traffic như lọc gói tin, chuyển đổi địa chỉ mạng, chuyển đổi port
+
+Netfilter framework bao gồm các hook cho kernel module để tương tác với các gói tin mạng khi chúng đi qua ngăn xếp mạng của hệ thống.
+
+Các hook của netfilter là các chương trình con của kernel giúp chặn các sự kiện (vd: gói tin đi vào interface) và chạy các chương trình (vd: firewall rule)
+
+**nftables framework**
+
+nftables là framework giúp phân loại và lọc gói tin bằng cách áp dụng các firewall rule cho network traffic dựa trên nền tảng là netfilter 
+
+nftables là thành phần cốt lõi của firewall, thay thế cho iptable đã lỗi thời
+
+nftables áp dụng được cho cả ipv4 và ipv6 cùng lúc
+
+**firewall service**
+
+firewall service là dịch vụ quản lý tường lửa động, có thể thay đổi và áp dụng rule mới mà ko cần khởi động lại dịch vụ hay reboot
+
+Cách hoạt động:
+- Phân loại mạng thành các 'zone' (vùng), mỗi zone có bộ quy tắc riêng cho phép hoặc chặn các port/ dịch vụ cụ thể
+- Một gói tin khi đến máy sẽ được gán vào zone dựa trên địa chỉ nguồn (source IP) hoặc giao diện mạng mà gói tin đi vào (interface)
+- Nếu giao diện mạng hoặc địa chỉ nguồn ko được gán zone riêng thì sẽ áp dụng zone mặc định
+- Zone mặc định là zone 'public', giao diện lo (loopback) được gán vào zone 'trusted'
+
+Các zone và chính sách:
+- Mỗi zone cho phép các traffic đi qua firewall nếu trùng với danh sách các cổng và giao thức cụ thể đã được định nghĩa (vd mở cổng 22 cho ssh)
+- Ngoài các cổng đã được mở thì mọi traffic sẽ bị chặn
+- Riêng zone 'trusted' cho phép mọi lưu lượng đi qua
+
+Tính năng kết hợp với Network Manager:
+- Với laptop hay các thiết bị thường xuyên thay đổi mạng, Network Manager có thể tự động gán zone firewall phù hợp theo mạng bạn kết nối (vd: mạng cty, mạng nhà, mạng công cộng...)
+- Điều này giúp ích cho 1 số dịch vụ như ssh, chỉ mở ở mạng đáng tin cậy, mạng công cộng sẽ bị chặn
+
+**Các zone có sẵn**
+
+| Zone name    | Mô tả chính sách mặc định                                                                                                                                    |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **trusted**  | Cho phép tất cả các kết nối đến (incoming traffic)                                                                                                           |
+| **home**     | Từ chối các kết nối đến, ngoại trừ: các kết nối liên quan đến traffic đi ra hoặc các dịch vụ định sẵn như ssh, mdns, ipp-client, samba-client, dhcpv6-client |
+| **internal** | Giống `home`: từ chối kết nối đến trừ các dịch vụ định sẵn (ssh, mdns, ipp-client, samba-client, dhcpv6-client)                                              |
+| **work**     | Từ chối kết nối đến trừ các dịch vụ ssh, ipp-client, dhcpv6-client                                                                                           |
+| **public**   | Từ chối kết nối đến trừ các dịch vụ ssh, dhcpv6-client; Đây là zone mặc định cho giao diện mạng mới                                                          |
+| **external** | Từ chối kết nối đến trừ dịch vụ ssh; đồng thời masquerade (NAT) cho IPv4 outgoing traffic được chuyển tiếp qua zone này                                      |
+| **dmz**      | Từ chối kết nối đến trừ dịch vụ ssh (dùng cho mạng vùng ngoài - demilitarized zone)                                                                          |
+| **block**    | Từ chối tất cả kết nối đến, trừ các kết nối liên quan đến traffic đi ra                                                                                      |
+| **drop**     | Bỏ (drop) tất cả các kết nối đến, kể cả không phản hồi ICMP (im lặng tuyệt đối)                                                                              |
+
+Lưu ý:
+- Mặc định, tất cả zone cho phép traffic đi ra và cho phép traffic đi vào nếu thuộc về phiên làm việc (session) mà hệ thống đã khởi tạo trước đó
+- Có thể tùy chỉnh thêm/xóa các cổng và dịch vụ của zone theo nhu cầu
+
+**Các dịch vụ có sẵn**
+
+| Service name      | Mô tả                                | Port/Protocol                               |
+| ----------------- | ------------------------------------ | ------------------------------------------- |
+| **ssh**           | Kết nối SSH đến máy cục bộ           | 22/tcp                                      |
+| **dhcpv6-client** | DHCPv6 client                        | 546/udp (IPv6 link-local fe80::/64)         |
+| **ipp-client**    | In ấn qua IPP                        | 631/udp                                     |
+| **samba-client**  | Chia sẻ file/print qua SMB (Windows) | 137/udp, 138/udp                            |
+| **mdns**          | Multicast DNS (name resolution)      | 5353/udp (224.0.0.251 IPv4 / ff02::fb IPv6) |
+| **cockpit**       | Web console quản trị RHEL            | 9090/tcp                                    |
+
+Thay vì phải nhớ dịch vụ này cần mở port nào, chỉ cần nhớ tên và add các service đã định nghĩa sẵn -> các cấu hình còn lại sẽ tự động cấu hình bằng firewalld, giúp giảm lỗi và tiết kiệm thời gian
+
+Xem ds các dịch vụ có sẵn:
+```bash
+firewall-cmd --get-services
+```
+
+Nếu ko có dịch vụ có sẵn, có thể mở port thủ công hoặc tạo dịch vụ mới trong /etc/firewalld/services/ bằng XML
+
+```bash
+# mở port thủ công
+firewall-cmd --add-port=8080/tcp --permanent
+```
+
+### 11.2. Cấu hình firewall
+
+**Qua web console**
+
+![firewall-web-1](pic/firewall-web-1.png)
+
+![firewall-web-2](pic/firewall-web-2.png)
+
+![firewall-web-3](pic/firewall-web-3.png)
+
+![firewall-web-4](pic/firewall-web-4.png)
+
+![firewall-web-5](pic/firewall-web-5.png)
+
+**Qua firewall-cmd**
+
+firewall-cmd là công cụ CLI tương tác với firewalld daemon
+
+Các lệnh sẽ áp dụng cho runtime configuration (tạm thời, mất khi reboot hoặc reload)
+
+Nếu muốn lưu các thay đổi vĩnh viễn, cần có '--permanent' và reload lại firewalld
+
+Sử dụng option '--zone=' để chỉ định zone, nếu không các thay đổi sẽ áp dụng cho default zone
+
+Nếu câu lệnh yêu cầu netmask, sử dụng CIDR (vd: 192.168.1/24)
+
+Một số lệnh thông dụng:
+
+| Lệnh                           | Mô tả                                                     |
+| ------------------------------ | --------------------------------------------------------- |
+| `--get-default-zone`           | Xem zone mặc định hiện tại                                |
+| `--set-default-zone=ZONE`      | Đặt zone mặc định (runtime + permanent)                   |
+| `--get-zones`                  | Liệt kê tất cả zone khả dụng                              |
+| `--get-active-zones`           | Xem zone nào đang hoạt động kèm interface/source          |
+| `--add-source=CIDR`            | Gán tất cả traffic từ IP/mạng vào zone                    |
+| `--remove-source=CIDR`         | Gỡ gán traffic từ IP/mạng ra khỏi zone                    |
+| `--add-interface=INTERFACE`    | Gán traffic từ interface vào zone                         |
+| `--change-interface=INTERFACE` | Chuyển interface sang zone khác                           |
+| `--list-all`                   | Liệt kê interfaces, sources, services, ports trong 1 zone |
+| `--list-all-zones`             | Xem toàn bộ thông tin của tất cả zones                    |
+| `--add-service=SERVICE`        | Mở dịch vụ (vd: ssh, http)                                |
+| `--add-port=PORT/PROTOCOL`     | Mở port cụ thể (vd: 8080/tcp)                             |
+| `--remove-service=SERVICE`     | Chặn dịch vụ                                              |
+| `--remove-port=PORT/PROTOCOL`  | Chặn port                                                 |
+| `--reload`                     | Áp dụng lại cấu hình permanent                            |
+
+Ví dụ:
+
+```bash
+# gán default zone là dmz
+firewall-cmd --set-default-zone=dmz
+
+# gán mạng LAN hiện tại là zone internal
+firewall-cmd --permanent --zone=internal \
+--add-source=192.168.0.0/24
+
+# mở port cho dịch vụ MySQL 
+firewall-cmd --permanent --zone=internal --add-service=mysql
+
+firewall-cmd --reload
+```
+
+### 11.3. Quản lý dán nhãn cho port của SELinux
+
+Ngoài việc gán context label cho file system và tiến trình, SELinux cũng gán label cho các port.
+
+SELinux kiểm soát quyền truy cập mạng bằng cách dán nhãn các port để kiểm soát dịch vụ nào được bind vào port đó
+
+Ví dụ: port 22/tcp của SSH đươc gán context 'ssh_port_t'
+
+Khi tiến trình được quản lý bới SELinux muốn listen trên 1 port, SELinux kieemrtra policy:
+- Nếu process type được phép bind vào port -> cho phép
+- Nếu không -> bị chặn
+
+**Quản lý dán nhãn của SELinux**
+
+Nếu chạy dịch vụ trên port không tiêu chuẩn và port không được dán nhãn với SELinux type phù hợp, SELinux có thể từ chối bind
+
+Giải pháp: Thêm hoặc đổi nhãn SELinux cho port phù hợp với dịch vụ.
+
+```bash
+# Kiểm tra các port của service
+grep gopher /etc/services
+
+gopher          70/tcp
+gopher          70/udp
+
+# liệt kê toàn bộ port label SELinux, lọc theo service name
+semanage port -l | grep ftp
+
+ftp_data_port_t                tcp      20
+ftp_port_t                     tcp      21, 989, 990
+ftp_port_t                     udp      989, 990
+tftp_port_t                    udp      69
+
+# liệt kê toàn bộ port label SELinux, lọc theo port number
+semanage port -l | grep -w 70
+
+gopher_port_t                  tcp      70
+gopher_port_t                  udp      70
+```
+
+Lưu ý:
+- một port chỉ có thể có 1 context duy nhất
+- việc chỉnh sửa port label phải dùng semanage port -a (add)/-m (modify)/-d (delete)
+
+**Quản lý port binding**
+
+Các dịch vụ mặc định trên RHEL đã có sẵn port context trong policy module của SELinux.
+
+Không thể thay đổi port mặc định bằng semanage port -m nếu đó là port mặc định được định nghĩa trong policy module.
+
+Muốn thay đổi port mặc định, phải sửa và reload policy module (ngoài phạm vi)
+
+Bạn chỉ có thể:
+- Gán nhãn SELinux cho port mới (thêm mới)
+- Xóa nhãn
+- Sửa nhãn của port mà bạn đã gán trước đó
+
+```bash
+# thêm port label
+semanage port -a -t <port_label> -p <tcp|udp> <PORT>
+
+# xóa port label
+semanage port -d -t <port_label> -p <tcp|udp> <PORT>
+
+# sửa port label
+semanage port -m -t <new_port_label> -p <tcp|udp> <PORT>
+```
