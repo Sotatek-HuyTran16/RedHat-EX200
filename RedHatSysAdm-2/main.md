@@ -10,7 +10,10 @@ Nên viết shell script với các trình soạn thảo nâng coa như vim ho�
 
 Dòng đầu tiên của scripts bắt đầu với '#!'
 ```bash
-#!/usr/bin/bash
+#!/usr/bin/bash -> OS như fedora hoặc RHEL mới
+
+# hoặc
+#!/bin/bash -> OS truyền thống Ubuntu, CentOS...
 ```
 
 Nếu scripts được lưu trong các thư mục bin chứa câu lệnh (các folder bin thường được chỉ định trong biến môi trường PATH), có thể chạy trực tiếp scripts bằng tên của scripts như 1 command thông thường
@@ -18,11 +21,12 @@ Nếu scripts được lưu trong các thư mục bin chứa câu lệnh (các f
 ```bash
 [user@host ~]$ which hello
 ~/bin/hello
+
 [user@host ~]$ echo $PATH
 /home/user/.local/bin:/home/user/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
 ```
 
-Một vài ký tự và từ có thể có ý nghĩa đặc biệt, để viết các ký tự này bthg, dùng '\' ở trước chúng hoặc thêm '' và ""
+Một vài ký tự và từ có thể có ý nghĩa đặc biệt, để viết các ký tự này bthg, dùng \ ở trước chúng hoặc thêm ' ' và " "
 
 ```bash
 [user@host ~]$ echo # not a comment #
@@ -35,15 +39,16 @@ Một vài ký tự và từ có thể có ý nghĩa đặc biệt, để viết
 # not a comment #
 ```
 
-Dấu '' sẽ diễn giải toàn bộ câu lệnh theo đúng nghĩa đen, trong khi dấu "" vẫn cho phép chèn các lệnh và tên biến.
+Dấu ' ' sẽ diễn giải toàn bộ câu lệnh theo đúng nghĩa đen, trong khi dấu " " vẫn cho phép chèn các lệnh và tên biến.
 ```bash
 [user@host ~]$ echo "Will variable $var evaluate to $(hostname -s)?"
-Biến host có được đánh giá là host không? 
+Will variable host evaluate to host?
+
 [user@host ~]$ echo 'Will variable $var evaluate to $(hostname -s)?'
-Biến $var có được đánh giá là $(hostname -s) không? 
+Will variable $var evaluate to $(hostname -s)?
 ```
 
-Để cung cấp output cho shell scripts, sử dụng 'echo' để gửi các message cho STDOUT (ở đâu là terminal) hoặc có thể sử dụng redirect để lưu STDOUT vào các file (> và >>)
+Để cung cấp output cho shell scripts, sử dụng 'echo' để gửi các message cho STDOUT (ở đây là terminal) hoặc có thể sử dụng redirect để lưu STDOUT vào các file (> và >>)
 
 ```bash
 [user@host ~]$ cat ~/bin/hello
@@ -64,57 +69,23 @@ Lệnh 'echo' cũng được sử dụng để hiển thị thông tin hoặc th
 echo "Hello, world"
 echo "ERROR: Houston, we have a problem." >&2
 
+exec 2>> /path/to/error.log  # tất cả STDERR sau này sẽ ghi vào file
+
 [user@host ~]$ hello 2> hello.log
 Hello, world
+
 [user@host ~]$ cat hello.log
 ERROR: Houston, we have a problem.
 ```
 
-### 1.2. Vòng lặp và điều kiện trong shell scripts
+| Ký hiệu | Chức năng                       |
+| ------- | ------------------------------- |
+| `>`     | Redirect STDOUT vào file        |
+| `>>`    | Append STDOUT vào file          |
+| `>&2`   | Chuyển hướng STDOUT sang STDERR |
+| `2>`    | Redirect STDERR vào file        |
 
-Vòng lặp trong scripts có syntax như sau:
-```bash
-for VARIABLE in LIST; do
-COMMAND VARIABLE
-done
-```
-
-Các giá trị của LIST được lưu như là một VARIBALE trong shell, và các câu lệnh lấy giá trị từ các VARIABLE đó
-
-```bash
-[user@host ~]$ for HOST in host{1,2,3}; do echo $HOST; done
-host1
-host2
-host3
-
-
-[user@host ~]$ for PACKAGE in $(rpm -qa | grep kernel); \
-do echo "$PACKAGE was installed on \
-$(date -d @$(rpm -q --qf "%{INSTALLTIME}\n" $PACKAGE))"; done
-kernel-tools-libs-5.14.0-70.2.1.el9_0.x86_64 was installed on Thu Mar 24 10:52:40 PM EDT 2022
-kernel-tools-5.14.0-70.2.1.el9_0.x86_64 was installed on Thu Mar 24 10:52:40 PM EDT 2022
-kernel-core-5.14.0-70.2.1.el9_0.x86_64 was installed on Thu Mar 24 10:52:46 PM EDT 2022
-kernel-modules-5.14.0-70.2.1.el9_0.x86_64 was installed on Thu Mar 24 10:52:47 PM EDT 2022
-kernel-5.14.0-70.2.1.el9_0.x86_64 was installed on Thu Mar 24 10:53:04 PM EDT 2022
-```
-
-Sau khi 1 scripts đã chạy toàn bộ nỗi dung, process sẽ thoát và trả quyền cho tiến trình cha của nó. Tuy nhiên, có thể thoát scripts trước khi chạy hết các lệnh bằng 'exit'
-
-Sử dụng exit với giá trị 0 -> 255, các giá trị này biểu diễn exit code. Exit code này sẽ được trả về cho tiến trình cha để biểu thị trạng thái khi thoát.
-
-Exit code 0 biểu duễn scripts đã hoàn thành mà ko có lỗi, tất cả các exit code khác đều thể hiện scripts đã gặp lỗi. Exit code nào đại diện cho lỗi nào thì tùy vòa việc định nghĩa của người lập trình scripts.
-
-Để nhận exit code của câu lệnh cuối cùng đã chạy xong, sử dụng biến ? như sau: '$?'
-```bash
-[user@host bin]$ cat hello
-#!/usr/bin/bash
-echo "Hello, world"
-exit 0
-[user@host bin]$ ./hello
-Hello, world
-[user@host bin]$ echo $?
-0
-```
+### 1.2. Kiểm tra logic
 
 Để đảm bảo các điều kiện bất ngờ không làm gián đoạn scripts, cần phải kiểm tra các input của scripts. Có thể xác định logic của scripts đã đúng chưa bằng lệnh 'test'.
 
@@ -148,6 +119,44 @@ Ví dụ:
 [user@host ~]$ STRING=''; [[ -z "$STRING" ]]; echo $?
 0
 [user@host ~]$ STRING='abc'; [[ -n "$STRING" ]]; echo $?
+0
+```
+
+### 1.2. Vòng lặp và điều kiện trong shell scripts
+
+Vòng lặp trong scripts có syntax như sau:
+```bash
+for VARIABLE in LIST; do
+COMMAND VARIABLE
+done
+```
+
+Các giá trị của LIST được lưu như là một VARIBALE trong shell, và các câu lệnh lấy giá trị từ các VARIABLE đó
+
+```bash
+[user@host ~]$ for HOST in host{1,2,3}; do echo $HOST; done
+host1
+host2
+host3
+```
+
+Sau khi 1 scripts đã chạy toàn bộ nỗi dung, process sẽ thoát và trả quyền cho tiến trình cha của nó. Tuy nhiên, có thể thoát scripts trước khi chạy hết các lệnh bằng 'exit'
+
+Sử dụng exit với giá trị 0 -> 255, các giá trị này biểu diễn exit code. Exit code này sẽ được trả về cho tiến trình cha để biểu thị trạng thái khi thoát.
+
+Exit code 0 biểu duễn scripts đã hoàn thành mà ko có lỗi, tất cả các exit code khác đều thể hiện scripts đã gặp lỗi. Exit code nào đại diện cho lỗi nào thì tùy vòa việc định nghĩa của người lập trình scripts.
+
+Để nhận exit code của câu lệnh cuối cùng đã chạy xong, sử dụng biến ? như sau: '$?'
+```bash
+[user@host bin]$ cat hello
+#!/usr/bin/bash
+echo "Hello, world"
+exit 0
+
+[user@host bin]$ ./hello
+Hello, world
+
+[user@host bin]$ echo $?
 0
 ```
 
@@ -501,9 +510,16 @@ Một số cấu hình timer:
 
 OnCalendar: lên lịch cố định theo ngày, giờ
 
+```bash
+# format
+OnCalendar=DayOfWeek Year-Month-Day Hour:Minute:Second
+```
+
 - OnCalendar=daily: mỗi ngày 
 - OnCalendar=Mon *-*-* 12:00:00 → mỗi thứ Hai lúc 12:00
 - OnCalendar=2022-04-* 12:35,37,39:16 → mỗi ngày trong tháng 4/2022 lúc 12:35:16, 12:37:16, 12:39:16
+- OnCalendar=0/3:00	-> Mỗi 3 giờ (0h, 3h, 6h, 9h…)
+- OnCalendar=*:00/2	-> Mỗi 2 phút
 
 OnUnitActiveSec=15min → chạy sau 15 phút kể từ lần cuối kích hoạt
 
@@ -2240,7 +2256,7 @@ Lưu ý:
 - Khi đã tạo file system bằng Stratis, ko chỉnh thủ công bằng LVM hay mkfs
 - Không dùng df để ktra dung lượng vì XFS trong Stratis luôn báo 1 TiB -> dùng 'stratis pool list'
 
-## CHapter 9: Truy cập lưu trữ qua mạng (network-attached storage)
+## Chapter 9: Truy cập lưu trữ qua mạng (network-attached storage)
 
 ### 9.1. Quản lý network-attached storage bằng NFS
 
@@ -2248,15 +2264,18 @@ Network file system (NFS) là giao thức chuẩn để chia sẻ file giữa Li
 
 NFS server export các thư mục, sau đó NFS client mount các thư mục đã export vào các thư mục mount point ở local.
 
+NFS chỉ export folder, ko export file
+
 NFS client có nhiều cách để mount các thư mục đã export:
 - Manually: sử dụng lệnh 'mount'
 - Persistent at boot: config file /etc/fstab
 - On demand: cấu hình một phương pháp tự động mount (autofs, systemd.automount)
 
-**Truy vấn thông tin export**
+**Query thông tin export**
 
-Với NFSv3, sử dụng RPC và yêu cầu rpcbind chạy trên server
+Để xem 1 server đang export những file/folder nào, sd lệnh
 ```bash
+# với NFSv3
 showmount --exports server
 
 Export list for server
@@ -2264,7 +2283,9 @@ Export list for server
 /shares/test2
 ```
 
-Với NFSv4, không dùng rpc, lệnh 'showmount' sẽ bị timeout. Để xem export directory cần mount root của export tree rồi tìm
+NFSv4 không dùng rpc -> lệnh 'showmount' sẽ bị timeout.
+
+Để xem các export directory cần mount root của server với 1 thư mục và tìm trong folder đó
 
 ```bash
 [root@host ~]# mkdir /mountpoint
@@ -2322,7 +2343,7 @@ lsof /mountpoint
 
 ### 9.2. Tự động mount network-attached storage
 
-Automounter (autofs) là một dịch vụ tự đọng mount và unmount file system hoặc NFS export theo nhu cầu
+Automounter (autofs) là một dịch vụ tự động mount và unmount file system hoặc NFS export theo nhu cầu
 
 Khi người dùng hoặc ứng dụng truy cập vào mount point → autofs sẽ mount ngay lập tức.
 
@@ -2352,13 +2373,16 @@ Nguyên lý hđ:
 | Tiết kiệm tài nguyên        | ❌                       | ✅                              |
 | Yêu cầu quyền root để mount | ✅                       | ❌ (tự mount khi user truy cập) |
 
-**Auto mount direct map and indirect map**
+**Khái niệm direct map và indirect map của autofs**
 
 Direct map:
-- Mount point cố định, đã biết trước
-- Thư mục mount tồn tại vĩnh viễn trong hệ thống (ngay cả khi chưa mount)
-- Cấu hình thường nằm trong /etc/auto.master trỏ đến file map /etc/auto.direct
-- Khi truy cập mount point, autofs mount ngay system đã định
+- Direct map = kiểu cấu hình autofs trong đó các mount point được khai báo bằng đường dẫn tuyệt đối.
+- Không cần “mountpoint cha” như indirect map (/nfs/...).
+- Thay vào đó, mỗi entry trong map chỉ định rõ ràng mount point cụ thể trên client.
+
+Nói cách khác: direct map mount NFS trực tiếp vào đúng chỗ bạn muốn
+
+Cấu hình thường nằm trong /etc/auto.master trỏ đến file map /etc/auto.direct
 
 ```bash
 # file /etc/auto.master
@@ -2373,10 +2397,8 @@ Direct map:
 ```
 
 Indirect map:
-- Mount point gốc cố định, nhưng thư mục con bên trong được tạo/xóa động khi cần
-- Mount path chưa biết trước cụ thể đến thư mục con
-- Thường dùng khi thư mục con thay đổi tùy người dùng, phiên làm việc hoặc tài nguyên động
-- Autofs sẽ tạo thư mục con khi có yêu cầu mount và xóa sau khi unmount
+- Với indirect map, bạn mount NFS dưới một directory gốc chung (ví dụ /nfs) và mỗi entry trong map sẽ tạo một subdir bên trong.
+- Khi user truy cập vào /nfs/projectA, autofs mới mount NFS server /export/projectA vào đó.
 
 ```bash
 # file /etc/auto.master
@@ -2389,8 +2411,8 @@ Indirect map:
 user1   -rw,sync  nfs-srv:/export/home/user1
 user2   -rw,sync  nfs-srv:/export/home/user2
 
-# user1: tên thư mục con -> /home/user1
-# user2: tên thư mục con -> /home/user2
+# khi truy cập vào /home/user1 sẽ chuyển sang nfs-srv:/export/home/user1
+# tương tự với user2
 ```
 
 **Các bước cấu hình dịch vụ auto mount**
@@ -2402,7 +2424,7 @@ Mỗi dòng có cấu trúc;
 mount-point     map-file
 
 # mount-point: thư mục gốc mà autofs quản lý
-# map-file: file cấu hình cac mount point con
+# map-file: file cấu hình các mount point con
 ```
 
 Có thể sd 1 file chứa nhiều dòng mount-point hoặc tạo nhiều file trong folder /etc/auto.master.d/ với đuôi .autofs, mỗi file gom nhóm các cấu hình liên quan
@@ -2414,6 +2436,10 @@ mount-point     mount-options     source-location
 # mount-point không có '/' ở đầy -> indirect map
 # mount-point có ghi đường dẫn tuyệt đối -> direct map
 ```
+
+Hoawjc sd 2 file 
+
+![nfs-autofs](pic/nfs-autofs.png)
 
 Với indirect map, có thể dùng wildcard để rút ngắn số lượng dòng cần viết
 ```bash
@@ -3145,3 +3171,383 @@ semanage port -d -t <port_label> -p <tcp|udp> <PORT>
 # sửa port label
 semanage port -m -t <new_port_label> -p <tcp|udp> <PORT>
 ```
+
+## Chapter 12: Cài đặt RHEL 
+
+### 12.1. Trouble shooot trong quá trình cài đặt
+
+Hai loại virtual console trong quá trình install:
+- Ctrl+Alt+F6: mặc định hiển thị giao diện đồ họa Anaconda
+- Ctrl+Alt+F1: mở tmux terminal multiplexer
+
+Sử dụng tmux: 
+- Bấm và thả Ctrl+B, sau đó bấm số 1–5 để chuyển cửa sổ
+-  Alt+Tab → Chuyển lần lượt qua các cửa sổ hiện tại
+
+| Phím tắt     | Nội dung                                                           |
+| ------------ | ------------------------------------------------------------------ |
+| **Ctrl+B 1** | Trang thông tin chính của quá trình cài đặt.                       |
+| **Ctrl+B 2** | Mở root shell (dùng gõ lệnh kiểm tra). File log được lưu ở `/tmp`. |
+| **Ctrl+B 3** | Xem `/tmp/anaconda.log` (log tổng thể của trình cài).              |
+| **Ctrl+B 4** | Xem `/tmp/storage.log` (log về lưu trữ, partition, disk).          |
+| **Ctrl+B 5** | Xem `/tmp/program.log` (log về các chương trình Anaconda gọi).     |
+
+Nếu quá trình cài bị treo hoặc lỗi, chuyển sang Ctrl+Alt+F1 → Ctrl+B 2 để mở shell và kiểm tra log (cat /tmp/anaconda.log, less /tmp/storage.log, …)
+
+### 12.2. Tự động cài đặt với Kickstart
+
+Kickstart là file cấu hình dạng text để Anaconda cài đặt hệ thống hoàn toàn tự động (không cần thao tác tay)
+
+Cấu trúc:
+- Các lệnh cài đặt (nguồn, phân vùng, network, bảo mật…).
+- %packages: chọn gói cài đặt (gói đơn, nhóm gói @, environment @^, module @module:stream/profile).
+- %pre: script chạy trước khi phân vùng đĩa.
+- %post: script chạy sau khi cài đặt xong.
+
+Có thể có nhiều section %post hoặc %pre
+
+**Câu lệnh cài đặt**
+
+```bash
+# chỉ định url chứa bộ cài RHEL
+# là đường dẫn đến thư mục ISO được mount hoặc repo cài đặt
+url --url="http://server/path/rhel9.0/x86_64/dvd/"
+
+# repo: chỉ định kkho dnf bổ sung để lấy thêm package cho quá trình install
+repo --name="appstream" --baseurl=http://server/path/AppStream/
+
+# Buộc quá trình install chạy ở chế độ dòng lệnh (text mode) thay vì đồ họa (GUI)
+text
+
+# enable VNC, cho phép cài đặt qua giao diện đồ họa từ xa bằng VNC viewer
+vnc --password=redhat
+```
+
+**Câu lệnh cài thiết bị lưu trữ và phân vùng**
+
+## Chapter 13: Chạy container
+
+### 13.1. Container
+
+Container là một tiến trình (process) được đóng gói kèm tất cả các thư viện và thành phần cần thiết để chạy ứng dụng
+
+Các thư viện cụ thể của ứng dụng nằm bên trong container, còn những thư viện chung không liên quan trực tiếp thì container sử dụng từ hệ điều hành host
+
+Nhờ đó container nhẹ hơn so với máy ảo (VM) và chạy nhanh hơn, khởi động và dừng gần như tức thì
+
+![container](pic/container.png)
+
+**Cách container hoạt động**
+
+Container engine (như Docker, Podman) tạo Union File System bằng cách:
+- Gộp (merge) các lớp (layers) của container image
+- Các lớp này immutable (không thay đổi được)
+- Khi chạy, engine thêm một lớp ghi (writable layer) để lưu thay đổi tạm thời
+- Ephemeral (tạm thời): khi container bị xóa, lớp ghi này biến mất
+
+Containers tận dụng tính năng kernel Linux:
+- Namespaces → cô lập môi trường (process, network, filesystem).
+- Control Groups (cgroups) → giới hạn CPU, RAM, IO cho container.
+- SELinux → kiểm soát quyền truy cập, tăng bảo mật.
+- seccomp → giới hạn các syscall mà container được phép gọi.
+
+**Container image và container instance**
+
+Container image
+- Dữ liệu gần như bất biến (immutable), chứa toàn bộ app và thư viện cần thiết
+- Giống như file cài đặt hoặc bản thiết kế
+- Tuân theo chuẩn OCI image-spec
+
+Container instance
+- Bản đang chạy của container image
+- Có thêm thông tin runtime như network, storage, volume mount…
+- Tuân theo chuẩn OCI runtime-spec
+
+**Container và VM**
+
+Mặc dù mục tiêu khá giống (cô lập ứng dụng trong môi trường riêng), nhưng cách thực hiện khác nhau:
+
+| **Tiêu chí**            | **Virtual Machine (VM)**                                       | **Container**                               |
+| ----------------------- | -------------------------------------------------------------- | ------------------------------------------- |
+| **Phần mềm điều khiển** | Hypervisor (KVM, Xen, VMware, Hyper-V)                         | Container Engine (Podman, Docker)           |
+| **Mức ảo hóa**          | Toàn bộ máy (kernel + OS + app)                                | Chỉ môi trường cần thiết cho app            |
+| **Kích thước**          | GB                                                             | MB                                          |
+| **Tốc độ khởi động**    | Chậm (phút)                                                    | Nhanh (giây)                                |
+| **Tính di động**        | Thường chỉ chạy được trên cùng loại hypervisor                 | Chạy trên bất kỳ engine OCI-compliant       |
+| **Kernel**              | Có thể khác kernel host                                        | Dùng chung kernel host                      |
+| **Khi nào nên dùng**    | Khi cần OS khác hoặc kernel khác, hoặc yêu cầu phần cứng riêng | Khi muốn triển khai nhanh, nhẹ, dễ nhân bản |
+
+Quản lý:
+- VM: Quản lý bằng phần mềm quản trị hypervisor (VD: Virtual Machine Manager, vCenter).
+- Container: Quản lý trực tiếp bằng container engine hoặc công cụ orchestration (Kubernetes, OpenShift).
+- OpenShift đặc biệt vì quản lý được cả container và VM từ một giao diện chung.
+
+### 13.2. Tạo container với Podman
+
+Là công cụ mã nguồn mở để tạo, chạy, quản lý container và image.
+
+Tuân thủ chuẩn OCI (Open Container Initiative), nên có thể chạy hầu hết image từ Docker Hub hoặc các registry khác.
+
+Hỗ trợ chạy container, tạo pod, và build image
+
+Podman là một công cụ quản lý container tương tự Docker, nhưng có vài điểm khác biệt:
+
+| Tiêu chí                    | Docker                                                   | Podman                                                                                     |
+| --------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| **Daemon**                  | Cần Docker daemon (`dockerd`) chạy nền.                  | **Daemonless** – không có tiến trình trung gian, Podman tương tác trực tiếp với container. |
+| **Quyền root**              | Thường chạy với quyền root (trừ khi dùng rootless mode). | Hỗ trợ **rootless mode** mặc định – chạy container với quyền user thường, bảo mật hơn.     |
+| **Tương thích lệnh**        | Dùng `docker` CLI.                                       | Lệnh **tương tự Docker** – nhiều trường hợp chỉ cần `alias docker=podman` là chạy được.    |
+| **Pod concept**             | Không có khái niệm pod.                                  | Có khái niệm **pod** như Kubernetes – nhóm nhiều container chia sẻ network và storage.     |
+| **Single point of failure** | Docker daemon chết → toàn bộ container bị ảnh hưởng.     | Không có daemon → container vẫn chạy nếu Podman CLI thoát.                                 |
+
+Các cách tương tác với Podman
+- CLI (Command Line Interface) – giống Docker CLI.
+- RESTful API – cho phép điều khiển Podman qua HTTP.
+- Podman Desktop – giao diện đồ họa, dễ quản lý container cho người mới.
+
+**Làm việc với Podman**
+
+```bash
+# ktra version
+podman -v
+
+# pull image
+podman pull registry.redhat.io/rhel9/rhel-guest-image:9.4
+
+# list image
+podman images
+
+# chạy container
+podman run registry.redhat.io/rhel9/rhel-guest-image:9.4 echo 'Red Hat'
+
+# xem container đang chạy
+podman ps
+
+# xem các thông tin container
+podman ps --all --format=json
+```
+
+Mặc định, dịch vụ bên trong container chỉ chạy trong môi trường container → bên ngoài không truy cập được.
+
+Để truy cập từ bên ngoài, cần map port của host sang port trong container
+
+```bash
+podman run -p HOST_PORT:CONTAINER_PORT IMAGE
+
+# vd
+podman run -p 8080:8080 registry.access.redhat.com/ubi9/httpd-24:latest
+```
+
+Environment variable trong container là giá trị cấu hình bên ngoài, ứng dụng có thể đọc được khi chạy.
+
+Dùng để truyền thông tin như hostname DB, API key, cấu hình môi trường…
+
+```bash
+podman run -e NAME='Red Hat' registry.redhat.io/rhel9/rhel-guest-image:9.4 printenv NAME
+```
+
+### 13.3. Container image registry
+
+Container Registry là kho lưu trữ cho các container image, tương tự như:
+- Docker Hub
+- Quay.io
+- Amazon ECR
+- Red Hat Registry
+
+Bạn có thể push image (tải lên) hoặc pull image (tải xuống) từ registry.
+
+Red Hat registry có 2 loại:
+- registry.access.redhat.com - ai cũng tải được
+- registry.redhat.io - yêu cầu tài khoản Red Hat
+
+**Cấu trúc tên image**
+
+```bash
+registry.access.redhat.com/ubi9/nodejs-18:latest
+```
+
+- Registry URL: registry.access.redhat.com
+- User/Organization: ubi9
+- Image repository: nodejs-18
+- Tag: latest
+
+Nếu sd tên rút gọn, podman sẽ tra cứu danh sách registry trong file '/etc/containers/registries.conf' theo thứ tự
+
+Có thể block 1 registry
+```bash
+[[registry]]
+location="docker.io"
+blocked=true
+```
+
+**Quản lý registry với Skopeo**
+
+Skopeo cho phép inspect (xem metadata) mà ko cần tải image
+```bash
+skopeo inspect docker://registry.access.redhat.com/ubi9/nodejs-18
+```
+
+Copy giữa các registry
+```bash
+skopeo copy \
+  docker://registry.access.redhat.com/ubi9/nodejs-18 \
+  docker://quay.io/myuser/nodejs-18
+```
+
+Copy image vào các thư mục local
+```bash
+skopeo copy \
+  docker://registry.access.redhat.com/ubi9/nodejs-18 \
+  dir:/var/lib/images/nodejs-18
+```
+
+**Quản lý registry credential với Podman**
+
+Một số registry như 'redhat.io' cần đăng nhập, bạn có thể chọn image khác từ các repo free hoặc đăng nhập
+```bash
+[user@host ~]$ podman login registry.redhat.io
+Username: YOUR_USER
+Password: YOUR_PASSWORD
+Login Succeeded!
+```
+
+Thông tin được lưu ở file
+```bash
+${XDG_RUNTIME_DIR}/containers/auth.json
+```
+
+User, pass được mã hóa bằng base64
+
+Cả hai công cụ Podman và Skopeo đều lấy thông tin đăng nhập từ file auth.json
+
+Nếu đã login bằng Podman → Skopeo cũng dùng được
+
+### 13.4. Quản lý vòng đời của container
+
+![container-command](pic/container-command.png)
+
+```bash
+# list
+podman ps --all
+
+# inspec
+podman inspect <id/name>
+
+# stop container graceful
+podman stop <id/name>
+
+# stop container bắt buộc
+podman kill <id/name>
+
+# pause
+podman pause <id/name>
+podman unpause <id/name>
+
+# restart
+podman restart <id/name>
+
+# remove
+podman rm <id/name>
+```
+
+**Container Persistent Storage**
+
+Container mặc định dùng storage ephemeral → dữ liệu mất khi container bị xoá
+
+Để lưu trữ lâu dài → dùng host directory mount với -v host_path:container_path
+
+Nhưng khi mount, phải đảm bảo quyền sở hữu (UID/GID) và SELinux context khớp giữa host và container
+
+Sd lệnh 'unshare cat' để xem UID/GID mapping giữa user trong container và user của máy host
+```bash
+[user@host ~]$ podman unshare cat /proc/self/uid_map
+         0       1000          1
+         1     100000      65536
+
+# 3 cột
+<UID trong namespace>   <UID thực trên host>   <Số lượng UID liên tiếp>
+```
+
+Ở ví dụ này, lệnh trả về kqua:
+- UID 0 bên trong container (root) ánh xạ đến UID 1000 ở máy host và 1 nghĩa là ánh xạ 1 UID duy nhất
+- UUID  bên trong container ánh xạ tới UID 100000 trên host và ánh xạ đến 1 block 65536 UID liên tiếp
+
+-> đảm bảo các user ko phải root trong container sẽ được map sang dải UUID ảo
+
+hi dùng Podman hoặc Docker, bạn có thể chỉ định user
+```bash
+podman run --user 1001:1001 myimage
+docker run --user 1001:1001 myimage
+
+# Khi đó, container sẽ chạy với UID=1001, GID=1001 bên trong.
+```
+
+**SELinux context**
+
+Mặc định, SELinux sẽ chặn container truy cập thư mục trên host nếu thư mục đó không có context phù hợp.
+
+Với container, SELinux yêu cầu thư mục hoặc file mount phải có type là container_file_t.
+
+Nếu không, container sẽ bị lỗi kiểu "Permission denied" ngay cả khi quyền file system (chmod/chown) là đúng.
+
+Khi chạy podman run, thêm hậu tố :Z vào sau tùy chọn -v:
+- :Z này làm relabel thư mục /home/user/db_data để SELinux gán type container_file_t
+- Điều này cho phép container truy cập thư mục như persistent storage
+
+```bash
+[user@host ~]$ podman run -d --name db01 \
+-e MYSQL_USER=student \
+-e MYSQL_PASSWORD=student \
+-e MYSQL_DATABASE=dev_data \
+-e MYSQL_ROOT_PASSWORD=redhat \
+-v /home/user/db_data:/var/lib/mysql:Z \
+registry.lab.example.com/rhel8/mariadb-105
+```
+
+Kiểm tra context file
+```bash
+[user@host ~]$ ls -Z /home/user/
+system_u:object_r:container_file_t:s0:c81,c1009 db_data
+...output omitted...
+```
+
+**Chạy container khi boot**
+
+Tạo file systemd service cho container
+
+```bash
+podman generate systemd --name <container-name> --files
+
+# lệnh này sẽ tạo
+/home/user/<container-name>.service
+```
+
+Chuyển file vào thư mục systemd
+
+```bash
+mkdir -p ~/.config/systemd/user
+mv container-web.service ~/.config/systemd/user/
+```
+
+Reload và khởi động service
+
+```bash
+systemctl --user daemon-reload
+
+# Khởi động container
+systemctl --user start container-web.service  
+
+# Dừng container
+systemctl --user stop container-web.service  
+
+# Kiểm tra trạng thái
+systemctl --user status container-web.service  
+
+# Cho phép tự khởi động khi login
+systemctl --user enable container-web.service  
+
+# Ngừng tự khởi động khi login
+systemctl --user disable container-web.service  
+```
+
+Hoặc copy vào folder systemd của hệ thống để khởi động ngay khi hệ thống boot và quản lý bằng systemctl

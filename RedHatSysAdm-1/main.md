@@ -937,7 +937,15 @@ find -user developer
 # tìm file dựa trên quyền thực thi
 find /home -perm 764
 
+# tìm file dựa trên size
+find /home -size +5M -size +10M
 ```
+
+Nếu một folder đang có dữ liệu được mount vào một device (vd: /dev/sdb1) thì dữ liệu hiện tại của folder sẽ không mất mà bị che khuất tạm thời.
+
+Các dữ liệu của folder lúc này sẽ là dữ liệu của device (/dev/sdb1)
+
+Khi unmount, các dữ liệu đã tạo vẫn ở trên device (/dev/sdb1) và dữ liệu ban đầu của folder lại hiển thị bình thường
 
 ## Chapter 15: Đo đạc và quản lý các tiến trình
 
@@ -1135,6 +1143,8 @@ systemctl list-dependencies sshd.service
 # liệt kê các unit cần NetworkManager để hoạt động
 systemctl list-dependencies --reverse NetworkManager.service
 ```
+
+Khi restart các daemon (.service, .socket ...) thì các PID của tiến trình sẽ thay đổi, còn khi reload thì PID giữ nguyên
 
 **Masking và Unmasking services**
 
@@ -1382,45 +1392,76 @@ host servera.lab.example.com
 
 ## Chapter 19: Cấu hình và bảo mật cho SSH
 
-Khi máy khách muốn ssh vào máy chủ, trước tiên máy chủ sẽ gửi public key về máy khách để máy khách kiểm tra.
+Máy server (muốn ssh vào server này) gồm:
+```bash
+/etc/ssh/ssh_host_rsa_key (private key của server)
+/etc/ssh/ssh_host_rsa_key.pub (public key của server)
+~/.ssh/authorized_keys (chứa public key của client)
+```
 
-Sau đó máy khách sẽ tạo 1 khóa bí mật tạm thời để giao tiếp và gửi cho máy chủ.
+Máy client (muốn ssh vào server) gồm:
+```bash
+id_rsa (private key, bí mật)
+id_rsa.pub (public key, có thể gửi lên server)
+```
+
+Luồng hd:
+1. Khi máy khách muốn ssh vào máy chủ, trước tiên máy chủ sẽ sử dụng ssh-keygen cho public key của server để tạo một fingerprint (là hash của public key) sau đó gửi cho client
+- Nếu là lần đầu kết nối, máy client sẽ hỏi user để lưu vào ~/.ssh/known_host
+- Những lần kết nối sau, máy client sẽ so sánh fingerprint mà server gửi với fingerprint đã lưu -> nếu ko khớp, sẽ xảy ra lỗi
+2. Sau đó, client sẽ gửi yêu cầu đăng nhập cho server, đòi được authen
+3. Server gửi challenge về client (thường là thông điệp ngẫu nhiên)
+4. Client sử dụng private key để ký chữ ký số (digital signature) và gửi cho server
+5. Server dùng public key của client đã được copy trên server để xác minh xem chữ ký đã khớp chưa -> nếu khớp thì authen thành công
 
 Có thể cấu hình các ssh client để quản lý cách máy của bạn handle host key với 2 file
 - /etc/ssh/ssh_config - file này cấu hình cho toàn bộ user trong hệ thống
 - ~/.ssh/config - file này cấu hình cho 1 user, sẽ override lại file trên nếu khác config
 
-Để kết nối đến máy chủ, đầu tiên dùng ssh-keygen để lấy thông tin về fingerprint của máy chủ
-
-Gửi fingerprint cho quản trị viên máy khách, máy khách dùng lệnh ssh và so sánh fingerprint -> lưu vào known_hosts
-
 **Quản lý known_hosts**
 
-Nếu host key của máy chủ thay đổi, lần ssh sau sẽ gặp cảnh báo.
+Admin của server phải thay đổi cặp khóa của server định kỳ
+-> Fingerprint thay đổi, client ssh sau khi có thay đổi sẽ gặp cảnh báo
 
-Phải xóa key cũ trong known_host:
-- cách 1: mở file known_host và tìm đúng host name -> xóa
-- cách 2: dùng lệnh 'ssh-keygen -R <tên-host>' hoặc 'ssh-keygen -R <tên-host> -f /etc/ssh/ssh_known_hosts'
+Cần cập nhật fingerprint trong known_host:
+1. mở file known_host của user (hoặc của hệ thống) và tìm đúng dòng chứa host name của server -> xóa thủ công
+2. dùng lệnh 'ssh-keygen -R <tên-host>' (user level) hoặc 'ssh-keygen -R <tên-host> -f /etc/ssh/ssh_known_hosts' (system level) -> lệnh này sẽ tự động tìm và xóa dòng chứa hostname trong các file chỉ định (xóa tự động)
 
-Sau đó, tự động thêm host key mới bằng lệnh:
+Sau khi xóa, lần đăng nhập sau sẽ tương tự lần đầu.
+
+Nếu chỉ xóa ở user level, lần đăng nhập sau của các user khác vẫn sẽ lỗi. Cần cập nhật ở system level để các user khác ko cần phải cập nhật fingerprint
+
+Có thể tự động cập nhật fingerprint bằng lệnh:
 ```bash
-ssh-keyscan <tên-host> >> ~/.ssh/known_hosts
+# user level
+ssh-keyscan -t <type> <tên-host> >> ~/.ssh/known_hosts
 
-# hoặc lấy thủ công như ban đầu
+# system level
+sudo bash -c 'ssh-keyscan -t ed25519 serverb >> /etc/ssh/ssh_known_hosts'
 ```
 
-**Quản lý ssh bằng file key**
+**ssh bằng file key**
 
 ssh bằng private key tiện lợi và bảo mật hơn vì ssh ko cần pass
 
-Trên máy khách, tạo cặp khóa private-public
+Các step:
+1. Trên máy client, tạo cặp khóa private-public
+2. Trên server, lưu public key vừa tạo vào file ~/.ssh/authorized_keys
+- Private key trên client phải có quyền truy cập là 600
+- Nếu private key có pass phrase mà muốn ssh không cần nhập pass phrase, sử dụng ssh-agent để thêm private key vào, sau đó chỉ cần nhập 1 lần
+- Có thể quản lý cấu hình ssh trên máy chủ bằng file /etc/ssh/sshd_config sau đó reload sshd
+- Các cấu hình khác có thể sd file ~/.ssh/config
 
-Trên máy chủ, lưu public key vào file ~/.ssh/authorized_keys
+Các bước sd ssh-agent:
+- Chạy ssh-agent ở bash shell
+```bash
+[operator1@servera ~]$ eval $(ssh-agent)
+Agent pid 2051
+```
 
-Private key phải có quyền truy cập là 600
-
-Nếu private key có pass phrase mà muốn ssh không cần nhập pass phrase, sử dụng ssh-agent để thêm private key vào, sau đó chỉ cần nhập 1 lần
-
-Quản lý cấu hình ssh trên máy chủ bằng file /etc/ssh/sshd_config sau đó reload sshd
-
-Các cấu hình khác có thể sd file ~/.ssh/config
+- Thêm ssh passphrase và key tương ứng vào ssh-agent
+```bash
+[operator1@servera ~]$ ssh-add ~/.ssh/protected-key
+Enter passphrase for .ssh/protected-key: redhatpass
+Identity added: .ssh/protected-key (operator1@servera)
+```
